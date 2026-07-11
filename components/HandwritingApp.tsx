@@ -37,7 +37,7 @@ function Icon({ name }: { name: string }) {
 export function HandwritingApp() {
   const [target, setTarget] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>("pen");
-  const [guideMode, setGuideMode] = useState<GuideMode>("free");
+  const [guideMode, setGuideMode] = useState<GuideMode>("boxes");
   const [stylusOnly, setStylusOnly] = useState(false);
   const [brushSize, setBrushSize] = useState(7);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
@@ -152,6 +152,7 @@ export function HandwritingApp() {
   }
 
   function selectWord(word: string) {
+    setGuideMode("boxes");
     setTarget(word);
     resetDrawing();
   }

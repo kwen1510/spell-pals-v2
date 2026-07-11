@@ -2,6 +2,8 @@
 
 A static, browser-only Chinese handwriting spelling checker. Handwriting is captured as pointer strokes and recognized locally with `gugray/hanzi_lookup`; no image OCR or backend is used.
 
+Each target character is presented in its own Chinese writing square by default: two-character words use two squares and three-character words use three squares.
+
 ## Run locally
 
 ```bash
