@@ -3,6 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChineseGuide, guideBoardStyle } from "./ChineseGuide";
 import { TraceModel } from "./TraceModel";
+import {
+  compactResultTone,
+  DETAILED_FEEDBACK_STORAGE_KEY,
+  parseDetailedFeedbackPreference,
+  resultHeading,
+  serializeDetailedFeedbackPreference,
+  simpleResultMessage,
+} from "./feedback-mode";
 import { HanziLookupRecognizer } from "@/lib/handwriting/recognizer";
 import { MyScriptRecognizer } from "@/lib/handwriting/myscript-recognizer";
 import { gradeRankedCandidates, markingStatus, type MarkingStatus } from "@/lib/handwriting/grading";
@@ -238,6 +246,8 @@ export function HandwritingApp() {
   const [marking, setMarking] = useState(false);
   const [message, setMessage] = useState("");
   const [result, setResult] = useState<Result | null>(null);
+  const [detailedFeedback, setDetailedFeedback] = useState(true);
+  const [feedbackPreferenceReady, setFeedbackPreferenceReady] = useState(false);
   const [traceTarget, setTraceTarget] = useState<string | null>(null);
   const [dimensions, setDimensions] = useState({ width: 600, height: 300 });
   const [debugSeparators, setDebugSeparators] = useState<number[]>([]);
@@ -265,6 +275,27 @@ export function HandwritingApp() {
   const recognitionLabel = RECOGNITION_LABELS[recognitionMethod];
 
   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
+
+  useEffect(() => {
+    try {
+      setDetailedFeedback(parseDetailedFeedbackPreference(window.localStorage.getItem(DETAILED_FEEDBACK_STORAGE_KEY)));
+    } catch {
+      // Storage can be unavailable in private browsing; keep the default.
+    }
+    setFeedbackPreferenceReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!feedbackPreferenceReady) return;
+    try {
+      window.localStorage.setItem(
+        DETAILED_FEEDBACK_STORAGE_KEY,
+        serializeDetailedFeedbackPreference(detailedFeedback),
+      );
+    } catch {
+      // The preference still works for this session when storage is unavailable.
+    }
+  }, [detailedFeedback, feedbackPreferenceReady]);
 
   useEffect(() => {
     if (!result) return;
@@ -812,6 +843,20 @@ export function HandwritingApp() {
             <button className={guideMode === "free" ? "active" : ""} onClick={() => selectGuideMode("free")}>Free canvas</button>
             <button className={guideMode === "boxes" ? "active" : ""} onClick={() => selectGuideMode("boxes")}>田字格</button>
           </div>
+          <div className="feedback-control">
+            <span id="feedback-control-label">Feedback</span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={detailedFeedback}
+              aria-labelledby="feedback-control-label feedback-control-value"
+              onClick={() => setDetailedFeedback((value) => !value)}
+            >
+              <span className="feedback-switch-track" aria-hidden="true"><span /></span>
+              <strong id="feedback-control-value">{detailedFeedback ? "On" : "Off"}</strong>
+            </button>
+            <small>{detailedFeedback ? "Show guidance" : "Result only"}</small>
+          </div>
           <div className="tool-group history-group">
             <button className="tool-button" onClick={undo} disabled={!undoStack.length} aria-label="Undo"><Icon name="undo"/><span>Undo</span></button>
             <button className="tool-button" onClick={redo} disabled={!redoStack.length} aria-label="Redo"><Icon name="redo"/><span>Redo</span></button>
@@ -858,22 +903,24 @@ export function HandwritingApp() {
 
       {message && <p ref={messageRef} id="mark-message" className="notice error" role="alert">{message}</p>}
       {result && (
-        <section ref={resultCardRef} id="mark-result" className={`result-card ${result.status}`} aria-live="polite">
+        <section
+          ref={resultCardRef}
+          id="mark-result"
+          className={`result-card ${result.status} ${detailedFeedback ? "detailed-result" : `compact-result binary-${compactResultTone(result.status)}`}`}
+          aria-live="polite"
+        >
           <div className="result-heading">
-            <span>{result.status === "correct" ? "✓" : result.status === "shape" ? "!" : result.status === "incomplete" ? "…" : "×"}</span>
+            <span>{result.status === "correct" ? "✓" : result.status === "incomplete" ? "…" : detailedFeedback && result.status === "shape" ? "!" : "×"}</span>
             <div>
               <p className="eyebrow">Your result</p>
-              <h2 ref={resultHeadingRef} tabIndex={-1}>
-                {result.status === "correct" && "Correct!"}
-                {result.status === "shape" && "I can read it, but part of the shape needs practice"}
-                {result.status === "unrecognized" && "Character not recognized"}
-                {result.status === "incomplete" && "Finish every character first"}
-              </h2>
+              <h2 ref={resultHeadingRef} tabIndex={-1}>{resultHeading(result.status, detailedFeedback)}</h2>
             </div>
           </div>
-          <p className="checked-method">Checked with {RECOGNITION_LABELS[result.method]}</p>
-          <p className="detected-copy">What you wrote looks like: <strong>{result.detected}</strong></p>
-          <div className="character-comparison">
+          {!detailedFeedback && <p className="simple-result-message">{simpleResultMessage(result.status)}</p>}
+          {detailedFeedback && <>
+            <p className="checked-method">Checked with {RECOGNITION_LABELS[result.method]}</p>
+            <p className="detected-copy">What you wrote looks like: <strong>{result.detected}</strong></p>
+            <div className="character-comparison">
             {Array.from(result.expected).map((expected, index) => {
               const rank = result.expectedRanks[index];
               const recognitionMatched = rank !== null && rank <= result.threshold;
@@ -920,17 +967,18 @@ export function HandwritingApp() {
                 </article>
               );
             })}
-          </div>
-          {result.recognitionPassed && result.expectedRanks.some((rank) => rank !== 1) && (
-            <p className="rank-note">Recognition passed because every expected character appeared within the top {result.threshold} candidates. Shape checking was graded separately.</p>
-          )}
-          {result.detectedCharacters.some((character) => !character) && (
-            <p className="spacing-warning">I couldn’t find a clear match for one or more characters. Your writing is still here—use the shape guidance above, then try again.</p>
-          )}
-          {result.weakSplit && guideMode === "free" && <p className="spacing-warning">Tip: leave a clearer space between each character next time.</p>}
+            </div>
+            {result.recognitionPassed && result.expectedRanks.some((rank) => rank !== 1) && (
+              <p className="rank-note">Recognition passed because every expected character appeared within the top {result.threshold} candidates. Shape checking was graded separately.</p>
+            )}
+            {result.detectedCharacters.some((character) => !character) && (
+              <p className="spacing-warning">I couldn’t find a clear match for one or more characters. Your writing is still here—use the shape guidance above, then try again.</p>
+            )}
+            {result.weakSplit && guideMode === "free" && <p className="spacing-warning">Tip: leave a clearer space between each character next time.</p>}
+          </>}
           <div className="result-actions">
             <button onClick={tryAgain}>Try again</button>
-            {(result.status !== "correct" || result.strokeAssessments.some((assessment) => !assessment.passed)) && (
+            {detailedFeedback && (result.status !== "correct" || result.strokeAssessments.some((assessment) => !assessment.passed)) && (
               <button className="trace-practice-button" onClick={startTracePractice}>Practise over the grid model</button>
             )}
             <button onClick={() => { setTraceTarget(null); setTarget(null); resetDrawing(); }}>Choose another word</button>
@@ -938,7 +986,7 @@ export function HandwritingApp() {
         </section>
       )}
 
-      {diagnosticsEnabled && target && (
+      {diagnosticsEnabled && target && detailedFeedback && (
         <details className="debug-panel">
           <summary>Developer diagnostics</summary>
           <p>Includes the raw stroke attempt, recognition candidates, segmentation, and shape assessment. It never includes service credentials.</p>

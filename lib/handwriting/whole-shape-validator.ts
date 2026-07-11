@@ -4,38 +4,47 @@ import { getShapeCompetitors, type ShapeCompetitorSource } from "./shape-competi
 import { dedupePath, pathLength } from "./shape-geometry";
 import type { CharacterBounds } from "./shape-validator";
 import type { Stroke } from "./types";
+import { normalizeVisibleShape } from "./visible-shape-normalization";
 
 /**
  * A light-weight, pen-lift-independent character check.
  *
- * Both the official median and the captured ink are rendered into the same
- * square-relative mask.  We intentionally never fit either path to its ink
- * bounding box: a character written in the wrong part of the 田字格 must stay
- * in the wrong part of the 田字格.  A very small transform search absorbs normal
- * Pencil variation while retaining useful placement feedback.
+ * Both the official median and the captured ink are uniformly scaled and
+ * centred in the same structural frame before correctness is decided. This
+ * removes whole-character size and placement without stretching proportions.
+ * Raw square-relative geometry is retained separately for coaching feedback.
  */
 
 export const WHOLE_SHAPE_MASK_SIZE = 64;
 export const WHOLE_SHAPE_MATCH_DISTANCE_RATIO = 0.055;
-export const WHOLE_SHAPE_MIN_EXPECTED_COVERAGE = 0.8;
-export const WHOLE_SHAPE_MIN_STUDENT_PRECISION = 0.78;
-export const WHOLE_SHAPE_MIN_MAJOR_CELL_COVERAGE = 0.48;
+export const WHOLE_SHAPE_MIN_EXPECTED_COVERAGE = 0.78;
+export const WHOLE_SHAPE_MIN_STUDENT_PRECISION = 0.74;
+export const WHOLE_SHAPE_MIN_MAJOR_CELL_COVERAGE = 0.44;
 export const WHOLE_SHAPE_MAJOR_CELL_SHARE = 0.075;
 export const WHOLE_SHAPE_BLANK_LENGTH_RATIO = 0.025;
-export const WHOLE_SHAPE_MIN_COMPONENT_COVERAGE = 0.62;
-export const WHOLE_SHAPE_MAX_COMPONENT_CENTROID_DELTA = 0.075;
+export const WHOLE_SHAPE_MIN_COMPONENT_COVERAGE = 0.55;
+export const WHOLE_SHAPE_MAX_COMPONENT_CENTROID_DELTA = 0.11;
 export const WHOLE_SHAPE_COMPONENT_ASSIGN_DISTANCE_RATIO = 0.1;
-export const WHOLE_SHAPE_MIN_COMPONENT_PRECISION = 0.68;
-export const WHOLE_SHAPE_MIN_COMPONENT_SIZE_RATIO = 0.62;
-export const WHOLE_SHAPE_MAX_COMPONENT_SIZE_RATIO = 1.45;
-export const WHOLE_SHAPE_MAX_UNASSIGNED_INK_SHARE = 0.14;
-export const WHOLE_SHAPE_MIN_DIRECTIONAL_EXPECTED_COVERAGE = 0.72;
-export const WHOLE_SHAPE_MIN_DIRECTIONAL_STUDENT_PRECISION = 0.76;
+export const WHOLE_SHAPE_MIN_COMPONENT_PRECISION = 0.62;
+export const WHOLE_SHAPE_MIN_COMPONENT_SIZE_RATIO = 0.5;
+export const WHOLE_SHAPE_MAX_COMPONENT_SIZE_RATIO = 1.75;
+export const WHOLE_SHAPE_MAX_UNASSIGNED_INK_SHARE = 0.18;
+export const WHOLE_SHAPE_MIN_DIRECTIONAL_EXPECTED_COVERAGE = 0.68;
+export const WHOLE_SHAPE_MIN_DIRECTIONAL_STUDENT_PRECISION = 0.75;
 export const WHOLE_SHAPE_DIRECTION_TOLERANCE_DEGREES = 50;
-export const WHOLE_SHAPE_MIN_COMPETITOR_MARGIN = 0.015;
+export const WHOLE_SHAPE_MIN_COMPETITOR_MARGIN = 0.012;
 export const WHOLE_SHAPE_MODEL_STROKE_DISTANCE_RATIO = 0.05;
+export const WHOLE_SHAPE_MODEL_ENDPOINT_DISTANCE_RATIO = 0.05;
 export const WHOLE_SHAPE_MODEL_STROKE_DIRECTION_TOLERANCE_DEGREES = 45;
-export const WHOLE_SHAPE_MIN_MODEL_STROKE_COVERAGE = 0.6;
+export const WHOLE_SHAPE_MIN_MODEL_STROKE_COVERAGE = 0.62;
+export const WHOLE_SHAPE_MIN_LONG_MODEL_STROKE_COVERAGE = 0.74;
+export const WHOLE_SHAPE_LONG_MODEL_STROKE_LENGTH = 220;
+
+const WHOLE_SHAPE_HARD_COMPONENT_COVERAGE = 0.45;
+const WHOLE_SHAPE_HARD_COMPONENT_PRECISION = 0.5;
+const WHOLE_SHAPE_HARD_COMPONENT_CENTROID_DELTA = 0.17;
+const WHOLE_SHAPE_HARD_COMPONENT_MIN_SIZE_RATIO = 0.36;
+const WHOLE_SHAPE_HARD_COMPONENT_MAX_SIZE_RATIO = 2.25;
 
 export type WholeShapeQuadrant = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
@@ -121,6 +130,14 @@ export interface WholeShapeMetrics {
   directionalExpectedCoverage: number;
   directionalStudentPrecision: number;
   modelStrokeCoverages: number[];
+  /** Student centreline length owned by each model path, relative to that path. */
+  modelStrokeSupportRatios: number[];
+  /** Longest consecutive unsupported share of each model path. */
+  modelStrokeLongestGaps: number[];
+  /** Fraction (0, .5, or 1) of each model path's endpoints supported by its owned ink. */
+  modelStrokeEndpointCoverages: number[];
+  /** Per-path threshold; long visible lines deliberately require more support. */
+  modelStrokeRequiredCoverages: number[];
   minimumModelStrokeCoverage: number;
   score: number;
   /** Raw, pre-alignment centroid difference as a proportion of the square side. */
@@ -158,6 +175,35 @@ export interface WholeShapeAssessment {
   referencePaths: ShapePoint[][];
 }
 
+export interface WholeShapeAlignmentRank {
+  /** Lowest normalized hard-gate margin; values at or above 1 are feasible. */
+  gateRatio: number;
+  /** Broad bidirectional raster quality used only after feasibility. */
+  score: number;
+}
+
+/**
+ * A feasible alignment always beats an infeasible one. Among feasible
+ * alignments visual quality wins; among infeasible ones the closest hard-gate
+ * margin wins. This prevents a raw average from selecting a transform which
+ * needlessly fails a stricter long-line requirement.
+ */
+export function shouldPreferWholeShapeAlignment(
+  candidate: WholeShapeAlignmentRank,
+  current: WholeShapeAlignmentRank | null,
+): boolean {
+  if (!current) return true;
+  const candidateFeasible = candidate.gateRatio >= 1;
+  const currentFeasible = current.gateRatio >= 1;
+  if (candidateFeasible !== currentFeasible) return candidateFeasible;
+  if (candidateFeasible) {
+    return candidate.score > current.score + 1e-6
+      || (Math.abs(candidate.score - current.score) <= 1e-6 && candidate.gateRatio > current.gateRatio);
+  }
+  return candidate.gateRatio > current.gateRatio + 1e-6
+    || (Math.abs(candidate.gateRatio - current.gateRatio) <= 1e-6 && candidate.score > current.score);
+}
+
 interface RasterizedInk {
   mask: Uint8Array;
   inkCount: number;
@@ -178,11 +224,23 @@ interface MatchCandidate {
   expectedCoverage: number;
   studentPrecision: number;
   score: number;
+  modelPathSupport: ModelPathSupportEvidence[];
+  /** Lowest normalized hard-gate margin for this alignment; 1 means feasible. */
+  gateRatio: number;
 }
 
 interface OrientedSample extends ShapePoint {
   tangentX: number;
   tangentY: number;
+}
+
+interface ModelPathSupportEvidence {
+  coverage: number;
+  supportRatio: number;
+  longestGap: number;
+  endpointCoverage: number;
+  /** Conservative combined score used by the hard completeness gate. */
+  score: number;
 }
 
 const QUADRANTS: readonly WholeShapeQuadrant[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
@@ -191,15 +249,21 @@ const CELLS: readonly WholeShapeCell[] = [
   "middle-left", "center", "middle-right",
   "lower-left", "lower-middle", "lower-right",
 ];
-const TRANSLATIONS = [-0.05, 0, 0.05] as const;
-const SCALES = [0.94, 1, 1.06] as const;
-const ROTATIONS = [-4, 0, 4] as const;
+// Whole-character scale and translation have already been removed uniformly.
+// Only a bounded rotation search remains for normal slant in student writing.
+const TRANSLATIONS = [0] as const;
+const SCALES = [0.94, 0.97, 1, 1.03, 1.06] as const;
+const COMPARISON_ROTATIONS = [-12, -10, -8, -6, -4, -2, 0, 2, 4, 6, 8, 10, 12] as const;
 const EMPTY_METRICS: WholeShapeMetrics = {
   expectedCoverage: 0,
   studentPrecision: 0,
   directionalExpectedCoverage: 0,
   directionalStudentPrecision: 0,
   modelStrokeCoverages: [],
+  modelStrokeSupportRatios: [],
+  modelStrokeLongestGaps: [],
+  modelStrokeEndpointCoverages: [],
+  modelStrokeRequiredCoverages: [],
   minimumModelStrokeCoverage: 0,
   score: 0,
   centroidDeltaX: 0,
@@ -320,6 +384,96 @@ function directionalCoverage(
   return matched / source.length;
 }
 
+/**
+ * Give every captured centreline sample to at most one official path, then
+ * measure completeness using only that path's owned samples.
+ *
+ * This is deliberately independent of captured pen lifts: joined and split
+ * pen movements are sampled into one pool. Ownership prevents a nearby line
+ * from being reused to make two distinct official paths appear complete.
+ * The length and longest-gap terms also stop a short fragment from covering a
+ * long reference path merely because the spatial tolerance reaches both ways.
+ */
+function uniquelySupportedModelPaths(
+  referencePaths: readonly ShapePoint[][],
+  studentSamples: readonly OrientedSample[],
+): ModelPathSupportEvidence[] {
+  const references = referencePaths.map((path) => orientedSamples([path]));
+  const maximumDistance = WHOLE_SHAPE_MODEL_STROKE_DISTANCE_RATIO * 1024;
+  const maximumDistanceSquared = maximumDistance ** 2;
+  const minimumCosine = Math.cos(WHOLE_SHAPE_MODEL_STROKE_DIRECTION_TOLERANCE_DEGREES * Math.PI / 180);
+  const ownedSamples = references.map((): OrientedSample[] => []);
+
+  for (const sample of studentSamples) {
+    let owner = -1;
+    let bestCost = Number.POSITIVE_INFINITY;
+    for (let pathIndex = 0; pathIndex < references.length; pathIndex += 1) {
+      for (const reference of references[pathIndex]) {
+        const deltaX = sample.x - reference.x;
+        const deltaY = sample.y - reference.y;
+        const distanceSquared = deltaX ** 2 + deltaY ** 2;
+        if (distanceSquared > maximumDistanceSquared) continue;
+        const cosine = Math.abs(sample.tangentX * reference.tangentX + sample.tangentY * reference.tangentY);
+        if (cosine < minimumCosine) continue;
+        // Distance owns the sample; the small angle term resolves close
+        // junction/parallel-line ties without making direction mandatory.
+        const cost = distanceSquared + (1 - cosine) * maximumDistanceSquared * 0.15;
+        if (cost < bestCost) {
+          bestCost = cost;
+          owner = pathIndex;
+        }
+      }
+    }
+    if (owner >= 0) ownedSamples[owner].push(sample);
+  }
+
+  return references.map((referenceSamples, pathIndex) => {
+    if (!referenceSamples.length) {
+      return { coverage: 0, supportRatio: 0, longestGap: 1, endpointCoverage: 0, score: 0 };
+    }
+    const support = ownedSamples[pathIndex];
+    const matched = referenceSamples.map((reference) => support.some((sample) => {
+      const deltaX = sample.x - reference.x;
+      const deltaY = sample.y - reference.y;
+      if (deltaX ** 2 + deltaY ** 2 > maximumDistanceSquared) return false;
+      const cosine = Math.abs(sample.tangentX * reference.tangentX + sample.tangentY * reference.tangentY);
+      return cosine >= minimumCosine;
+    }));
+    const matchedCount = matched.filter(Boolean).length;
+    let longestGapCount = 0;
+    let currentGapCount = 0;
+    for (const isMatched of matched) {
+      if (isMatched) {
+        currentGapCount = 0;
+      } else {
+        currentGapCount += 1;
+        longestGapCount = Math.max(longestGapCount, currentGapCount);
+      }
+    }
+    const coverage = matchedCount / referenceSamples.length;
+    const supportRatio = support.length / referenceSamples.length;
+    const longestGap = longestGapCount / referenceSamples.length;
+    const maximumEndpointDistanceSquared = (WHOLE_SHAPE_MODEL_ENDPOINT_DISTANCE_RATIO * 1024) ** 2;
+    // Endpoints shared at a junction may legitimately be supplied by a joined
+    // neighbouring movement, so endpoint anchors use the full centreline pool.
+    // Path interiors and length remain exclusively owned above.
+    const endpointCoverage = [referenceSamples[0], referenceSamples.at(-1)!]
+      .filter((endpoint) => studentSamples.some((sample) => {
+        const deltaX = sample.x - endpoint.x;
+        const deltaY = sample.y - endpoint.y;
+        if (deltaX ** 2 + deltaY ** 2 > maximumEndpointDistanceSquared) return false;
+        return true;
+      })).length / 2;
+    return {
+      coverage,
+      supportRatio,
+      longestGap,
+      endpointCoverage,
+      score: Math.min(coverage, Math.min(1, supportRatio), 1 - longestGap, endpointCoverage),
+    };
+  });
+}
+
 function markDisk(mask: Uint8Array, x: number, y: number, radius: number): void {
   const size = WHOLE_SHAPE_MASK_SIZE;
   const minimumX = Math.max(0, Math.floor(x - radius));
@@ -416,23 +570,30 @@ function directedCoverage(source: Uint8Array, targetDistances: Float32Array, max
 }
 
 function candidateScore(expectedCoverage: number, studentPrecision: number, transform: WholeShapeTransform, outsideInkRatio: number): number {
-  const transformCost = (
-    Math.abs(transform.translateX) / 0.05
-    + Math.abs(transform.translateY) / 0.05
-    + Math.abs(transform.scale - 1) / 0.06
-    + Math.abs(transform.rotationDegrees) / 4
-  ) * 0.004;
-  return expectedCoverage * 0.58 + studentPrecision * 0.42 - transformCost - outsideInkRatio * 0.2;
+  const scaleCost = Math.abs(transform.scale - 1) / 0.06 * 0.001;
+  return expectedCoverage * 0.58 + studentPrecision * 0.42 - scaleCost - outsideInkRatio * 0.2;
 }
 
-function bestMatch(studentPaths: ShapePoint[][], expectedMask: Uint8Array): MatchCandidate {
+function requiredModelPathCoverage(referencePath: ShapePoint[]): number {
+  return pathLength(referencePath) >= WHOLE_SHAPE_LONG_MODEL_STROKE_LENGTH
+    ? WHOLE_SHAPE_MIN_LONG_MODEL_STROKE_COVERAGE
+    : WHOLE_SHAPE_MIN_MODEL_STROKE_COVERAGE;
+}
+
+function bestMatch(
+  studentPaths: ShapePoint[][],
+  expectedPaths: ShapePoint[][],
+  expectedMask: Uint8Array,
+): MatchCandidate {
   const distanceToExpected = distanceField(expectedMask);
   const maximumDistance = WHOLE_SHAPE_MATCH_DISTANCE_RATIO * WHOLE_SHAPE_MASK_SIZE;
+  const expectedSamples = orientedSamples(expectedPaths);
+  const requiredPathCoverages = expectedPaths.map(requiredModelPathCoverage);
   let best: MatchCandidate | null = null;
   for (const translateX of TRANSLATIONS) {
     for (const translateY of TRANSLATIONS) {
       for (const scale of SCALES) {
-        for (const rotationDegrees of ROTATIONS) {
+        for (const rotationDegrees of COMPARISON_ROTATIONS) {
           const transform: WholeShapeTransform = { translateX, translateY, scale, rotationDegrees };
           const raster = rasterize(studentPaths, transform);
           const distanceToStudent = distanceField(raster.mask);
@@ -444,8 +605,33 @@ function bestMatch(studentPaths: ShapePoint[][], expectedMask: Uint8Array): Matc
           const inSquarePrecision = directedCoverage(raster.mask, distanceToExpected, maximumDistance);
           const studentPrecision = inSquarePrecision * (1 - raster.outsideInkRatio);
           const score = candidateScore(expectedCoverage, studentPrecision, transform, raster.outsideInkRatio);
-          if (!best || score > best.score) {
-            best = { transform, raster, distanceToStudent, expectedCoverage, studentPrecision, score };
+          const transformedStudentSamples = orientedSamples(studentPaths, transform);
+          const modelPathSupport = uniquelySupportedModelPaths(expectedPaths, transformedStudentSamples);
+          const minimumPathGateRatio = modelPathSupport.length
+            ? Math.min(...modelPathSupport.map((evidence, index) => (
+              evidence.score / requiredPathCoverages[index]
+            )))
+            : 0;
+          const directionalExpectedCoverage = directionalCoverage(expectedSamples, transformedStudentSamples);
+          const directionalStudentPrecision = directionalCoverage(transformedStudentSamples, expectedSamples);
+          const gateRatio = Math.min(
+            expectedCoverage / WHOLE_SHAPE_MIN_EXPECTED_COVERAGE,
+            studentPrecision / WHOLE_SHAPE_MIN_STUDENT_PRECISION,
+            directionalExpectedCoverage / WHOLE_SHAPE_MIN_DIRECTIONAL_EXPECTED_COVERAGE,
+            directionalStudentPrecision / WHOLE_SHAPE_MIN_DIRECTIONAL_STUDENT_PRECISION,
+            minimumPathGateRatio,
+          );
+          if (shouldPreferWholeShapeAlignment({ gateRatio, score }, best)) {
+            best = {
+              transform,
+              raster,
+              distanceToStudent,
+              expectedCoverage,
+              studentPrecision,
+              score,
+              modelPathSupport,
+              gateRatio,
+            };
           }
         }
       }
@@ -463,6 +649,21 @@ function fixedAlignmentScore(studentRaster: RasterizedInk, referenceMask: Uint8A
   const inSquarePrecision = directedCoverage(studentRaster.mask, distanceToReference, maximumDistance);
   const studentPrecision = inSquarePrecision * (1 - studentRaster.outsideInkRatio);
   return expectedCoverage * 0.58 + studentPrecision * 0.42;
+}
+
+/** Fair target/competitor score after the same small rotation search. */
+function rotationInvariantComparisonScore(studentPaths: ShapePoint[][], referenceMask: Uint8Array): number {
+  let best = 0;
+  for (const rotationDegrees of COMPARISON_ROTATIONS) {
+    const score = fixedAlignmentScore(rasterize(studentPaths, {
+      translateX: 0,
+      translateY: 0,
+      scale: 1,
+      rotationDegrees,
+    }), referenceMask);
+    best = Math.max(best, score);
+  }
+  return best;
 }
 
 function maskGeometry(mask: Uint8Array): MaskGeometry {
@@ -579,7 +780,7 @@ function placementIssues(expected: MaskGeometry, student: MaskGeometry): WholeSh
   const deltaY = student.centroidY - expected.centroidY;
   const addPosition = (code: WholeShapeIssueCode, amount: number, message: string) => {
     if (amount <= 0.065) return;
-    issues.push({ code, severity: amount > 0.115 ? "error" : "warning", message });
+    issues.push({ code, severity: "warning", message });
   };
   addPosition("too-far-left", -deltaX, "The whole character is too far left in the square.");
   addPosition("too-far-right", deltaX, "The whole character is too far right in the square.");
@@ -592,13 +793,13 @@ function placementIssues(expected: MaskGeometry, student: MaskGeometry): WholeSh
   if (areaScale > 0 && areaScale < 0.76) {
     issues.push({
       code: "too-small",
-      severity: areaScale < 0.62 ? "error" : "warning",
+      severity: "warning",
       message: "The character is too small for the square.",
     });
   } else if (areaScale > 1.28) {
     issues.push({
       code: "too-large",
-      severity: areaScale > 1.48 ? "error" : "warning",
+      severity: "warning",
       message: "The character is too large for the square.",
     });
   }
@@ -671,16 +872,31 @@ export function assessWholeCharacterShape(
     }, true);
   }
 
-  const expectedRaster = rasterize(referencePaths);
+  const normalizedReference = normalizeVisibleShape(referencePaths);
+  const normalizedStudent = normalizeVisibleShape(studentPaths);
+  if (!normalizedReference || !normalizedStudent) {
+    return baseAssessment(strokes.length, referencePaths.length, referencePaths, studentPaths, {
+      code: "invalid-input",
+      severity: "error",
+      message: "The writing square or captured points are invalid.",
+    }, false);
+  }
+  const structuralReferencePaths = normalizedReference.paths;
+  const structuralStudentPaths = normalizedStudent.paths;
+  const rawExpectedRaster = rasterize(referencePaths);
+  const expectedRaster = rasterize(structuralReferencePaths);
   const rawStudentRaster = rasterize(studentPaths);
-  const match = bestMatch(studentPaths, expectedRaster.mask);
-  // Competitors reuse the one target-aligned student raster. This avoids an
-  // additional 81-transform search per reference on iPad while still asking
-  // whether the same visible ink fits another character at least as well.
-  const targetComparisonScore = fixedAlignmentScore(match.raster, expectedRaster.mask);
+  const match = bestMatch(structuralStudentPaths, structuralReferencePaths, expectedRaster.mask);
+  // Target and competitors are compared in the same independently normalized
+  // frame, without the target's residual alignment. This avoids target-biased
+  // fitting and an additional 81-transform search per competitor on iPad.
+  const targetComparisonScore = rotationInvariantComparisonScore(structuralStudentPaths, expectedRaster.mask);
   const closestCompetitor = getShapeCompetitors(expected)
     .map((competitor): WholeShapeCompetitorEvidence => {
-      const competitorScore = fixedAlignmentScore(match.raster, rasterize(competitor.paths).mask);
+      const normalizedCompetitor = normalizeVisibleShape(competitor.paths);
+      const competitorScore = normalizedCompetitor
+        ? rotationInvariantComparisonScore(structuralStudentPaths, rasterize(normalizedCompetitor.paths).mask)
+        : 0;
       return {
         character: competitor.character,
         source: competitor.source,
@@ -689,19 +905,22 @@ export function assessWholeCharacterShape(
       };
     })
     .sort((left, right) => right.score - left.score)[0] ?? null;
-  const expectedDirectionalSamples = orientedSamples(referencePaths);
-  const studentDirectionalSamples = orientedSamples(studentPaths, match.transform);
+  const expectedDirectionalSamples = orientedSamples(structuralReferencePaths);
+  const studentDirectionalSamples = orientedSamples(structuralStudentPaths, match.transform);
   const directionalExpectedCoverage = directionalCoverage(expectedDirectionalSamples, studentDirectionalSamples);
   const directionalStudentPrecision = directionalCoverage(studentDirectionalSamples, expectedDirectionalSamples);
-  const modelStrokeCoverages = referencePaths.map((referencePath) => directionalCoverage(
-    orientedSamples([referencePath]),
-    studentDirectionalSamples,
-    WHOLE_SHAPE_MODEL_STROKE_DISTANCE_RATIO,
-    WHOLE_SHAPE_MODEL_STROKE_DIRECTION_TOLERANCE_DEGREES,
+  const modelPathSupport = match.modelPathSupport;
+  const modelStrokeCoverages = modelPathSupport.map((evidence) => evidence.score);
+  const modelStrokeSupportRatios = modelPathSupport.map((evidence) => evidence.supportRatio);
+  const modelStrokeLongestGaps = modelPathSupport.map((evidence) => evidence.longestGap);
+  const modelStrokeEndpointCoverages = modelPathSupport.map((evidence) => evidence.endpointCoverage);
+  const modelStrokeRequiredCoverages = structuralReferencePaths.map(requiredModelPathCoverage);
+  const modelStrokeCompletenessPassed = modelStrokeCoverages.every((coverage, index) => (
+    coverage >= modelStrokeRequiredCoverages[index]
   ));
   const minimumModelStrokeCoverage = modelStrokeCoverages.length ? Math.min(...modelStrokeCoverages) : 0;
   const distanceToExpected = distanceField(expectedRaster.mask);
-  const expectedGeometry = maskGeometry(expectedRaster.mask);
+  const expectedGeometry = maskGeometry(rawExpectedRaster.mask);
   const studentGeometry = maskGeometry(rawStudentRaster.mask);
   const widthRatio = expectedGeometry.width ? studentGeometry.width / expectedGeometry.width : 0;
   const heightRatio = expectedGeometry.height ? studentGeometry.height / expectedGeometry.height : 0;
@@ -724,7 +943,7 @@ export function assessWholeCharacterShape(
   const studentInkTotal = match.raster.inkCount;
   const componentSources = getCharacterComponents(expected).map((definition) => {
     const componentPaths = definition.strokeIndices
-      .map((strokeIndex) => referencePaths[strokeIndex])
+      .map((strokeIndex) => structuralReferencePaths[strokeIndex])
       .filter((path): path is ShapePoint[] => Boolean(path));
     const componentRaster = rasterize(componentPaths);
     const distanceToComponent = distanceField(componentRaster.mask);
@@ -810,6 +1029,15 @@ export function assessWholeCharacterShape(
   ];
 
   for (const component of components.filter((component) => !component.passed)) {
+    const severeComponentFailure = !component.hasStudentSupport
+      || component.expectedCoverage < WHOLE_SHAPE_HARD_COMPONENT_COVERAGE
+      || component.studentPrecision < WHOLE_SHAPE_HARD_COMPONENT_PRECISION
+      || Math.abs(component.centroidDeltaX) > WHOLE_SHAPE_HARD_COMPONENT_CENTROID_DELTA
+      || Math.abs(component.centroidDeltaY) > WHOLE_SHAPE_HARD_COMPONENT_CENTROID_DELTA
+      || component.widthRatio < WHOLE_SHAPE_HARD_COMPONENT_MIN_SIZE_RATIO
+      || component.widthRatio > WHOLE_SHAPE_HARD_COMPONENT_MAX_SIZE_RATIO
+      || component.heightRatio < WHOLE_SHAPE_HARD_COMPONENT_MIN_SIZE_RATIO
+      || component.heightRatio > WHOLE_SHAPE_HARD_COMPONENT_MAX_SIZE_RATIO;
     const direction = component.hasStudentSupport && Math.abs(component.centroidDeltaY) >= Math.abs(component.centroidDeltaX)
       ? component.centroidDeltaY > WHOLE_SHAPE_MAX_COMPONENT_CENTROID_DELTA
         ? "too low"
@@ -834,7 +1062,10 @@ export function assessWholeCharacterShape(
       : null;
     issues.push({
       code: "missing-major-shape",
-      severity: "error",
+      // Moderate proportion/placement differences are useful coaching but do
+      // not fail a readable student character. Only absent or grossly
+      // malformed components are correctness errors.
+      severity: severeComponentFailure ? "error" : "warning",
       message: !component.hasStudentSupport
         ? `The ${component.label} component ${componentPositionPhrase(component.position)} is missing.`
         : direction
@@ -848,7 +1079,7 @@ export function assessWholeCharacterShape(
   if (
     (match.expectedCoverage < WHOLE_SHAPE_MIN_EXPECTED_COVERAGE
       || directionalExpectedCoverage < WHOLE_SHAPE_MIN_DIRECTIONAL_EXPECTED_COVERAGE
-      || minimumModelStrokeCoverage < WHOLE_SHAPE_MIN_MODEL_STROKE_COVERAGE)
+      || !modelStrokeCompletenessPassed)
     && !issues.some((issue) => issue.code === "missing-major-shape")
   ) {
     issues.push({
@@ -869,7 +1100,6 @@ export function assessWholeCharacterShape(
   if (
     match.studentPrecision < WHOLE_SHAPE_MIN_STUDENT_PRECISION
     || directionalStudentPrecision < WHOLE_SHAPE_MIN_DIRECTIONAL_STUDENT_PRECISION
-    || rawStudentRaster.outsideInkRatio > 0.08
     || unassignedInkShare > WHOLE_SHAPE_MAX_UNASSIGNED_INK_SHARE
     || extraCell
   ) {
@@ -900,6 +1130,10 @@ export function assessWholeCharacterShape(
     directionalExpectedCoverage,
     directionalStudentPrecision,
     modelStrokeCoverages,
+    modelStrokeSupportRatios,
+    modelStrokeLongestGaps,
+    modelStrokeEndpointCoverages,
+    modelStrokeRequiredCoverages,
     minimumModelStrokeCoverage,
     score: match.score,
     centroidDeltaX: studentGeometry.centroidX - expectedGeometry.centroidX,
@@ -913,7 +1147,7 @@ export function assessWholeCharacterShape(
     || match.studentPrecision < WHOLE_SHAPE_MIN_STUDENT_PRECISION
     || directionalExpectedCoverage < WHOLE_SHAPE_MIN_DIRECTIONAL_EXPECTED_COVERAGE
     || directionalStudentPrecision < WHOLE_SHAPE_MIN_DIRECTIONAL_STUDENT_PRECISION
-    || minimumModelStrokeCoverage < WHOLE_SHAPE_MIN_MODEL_STROKE_COVERAGE;
+    || !modelStrokeCompletenessPassed;
   return {
     passed: !hardMetricFailure && !uniqueIssues.some((issue) => issue.severity === "error"),
     blank: false,
