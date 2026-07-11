@@ -4,8 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChineseGuide } from "./ChineseGuide";
 import { HanziLookupRecognizer } from "@/lib/handwriting/recognizer";
 import { MyScriptRecognizer } from "@/lib/handwriting/myscript-recognizer";
-import { gradeRankedCandidates } from "@/lib/handwriting/grading";
+import { gradeRankedCandidates, targetAwareCorrect } from "@/lib/handwriting/grading";
 import { shouldIgnoreTouchInput } from "@/lib/handwriting/input-policy";
+import { characterShapeRegions } from "@/lib/handwriting/shape-regions";
+import { assessCharacterShape } from "@/lib/handwriting/shape-validator";
 import { cloneStrokes, scaleStrokes } from "@/lib/handwriting/stroke-utils";
 import { segmentByBoxes, segmentByWhitespace } from "@/lib/handwriting/segmentation";
 import type { CharacterPrediction, HandwritingRecognizer, Stroke, StrokePoint } from "@/lib/handwriting/types";
@@ -15,6 +17,9 @@ type Tool = "pen" | "eraser";
 type GuideMode = "free" | "boxes";
 type RecognitionMethod = "local" | "myscript";
 type RecognizerState = "loading" | "ready" | "error";
+type ResultStatus = "correct" | "shape" | "unrecognized";
+type ShapeAssessment = ReturnType<typeof assessCharacterShape>;
+type DiagnosticAttempt = ReturnType<typeof diagnosticAttempt>;
 
 const RECOGNITION_METHODS: RecognitionMethod[] = ["local", "myscript"];
 const RECOGNITION_LABELS: Record<RecognitionMethod, string> = {
@@ -28,9 +33,94 @@ interface Result {
   detectedCharacters: string[];
   expectedRanks: Array<number | null>;
   threshold: number;
-  correct: boolean;
+  recognitionPassed: boolean;
+  shapeAssessments: ShapeAssessment[];
+  regions: ReturnType<typeof characterShapeRegions>;
+  separators: number[];
+  markDimensions: { width: number; height: number };
+  attempt: DiagnosticAttempt;
+  predictions: CharacterPrediction[][];
+  status: ResultStatus;
   weakSplit: boolean;
   method: RecognitionMethod;
+}
+
+function pointPair(point: unknown): [number, number] | null {
+  if (Array.isArray(point) && point.length >= 2 && Number.isFinite(point[0]) && Number.isFinite(point[1])) {
+    return [Number(point[0]), Number(point[1])];
+  }
+  if (point && typeof point === "object" && "x" in point && "y" in point) {
+    const { x, y } = point as { x: unknown; y: unknown };
+    if (typeof x === "number" && typeof y === "number" && Number.isFinite(x) && Number.isFinite(y)) return [x, y];
+  }
+  return null;
+}
+
+function polylinePoints(path: unknown) {
+  if (!Array.isArray(path)) return "";
+  return path.map(pointPair).filter((point): point is [number, number] => point !== null).map(([x, y]) => `${x},${y}`).join(" ");
+}
+
+function readableShapeIssue(reason: string) {
+  const normalized = reason.toLowerCase().replaceAll("_", " ").replaceAll("-", " ");
+  const labels: Array<[RegExp, string]> = [
+    [/reference|unsupported|missing data/, "Shape reference data is unavailable."],
+    [/missing|too few/, "A stroke may be missing."],
+    [/extra|too many|unmatched/, "There may be an extra stroke."],
+    [/direction|reverse/, "A stroke was drawn in the wrong direction."],
+    [/position|placement|displac|far/, "A stroke is in the wrong place."],
+    [/short|length|overlong/, "A stroke is too short, too long, or the wrong length."],
+    [/curve|shape|frechet/, "A stroke has the wrong curve or shape."],
+    [/invalid|input/, "The captured strokes could not be checked."],
+  ];
+  return labels.find(([pattern]) => pattern.test(normalized))?.[1] ?? reason;
+}
+
+function repairLabel(repair: ShapeAssessment["repairApplied"]) {
+  if (!repair || repair === "none") return null;
+  const value = String(repair).toLowerCase();
+  if (value.includes("merge")) return "One accidental pen lift was repaired.";
+  if (value.includes("split")) return "One accidentally joined stroke was repaired.";
+  return `Capture repair used: ${String(repair)}.`;
+}
+
+function ShapePreview({ assessment, expected }: { assessment: ShapeAssessment; expected: string }) {
+  const studentPaths = assessment.studentPaths ?? [];
+  const failedExpectedIndices = new Set(assessment.matches.filter((match) => !match.passed).map((match) => match.expectedIndex));
+  const referencePaths = assessment.passed
+    ? []
+    : failedExpectedIndices.size
+      ? assessment.referencePaths.filter((_, index) => failedExpectedIndices.has(index))
+      : assessment.referencePaths;
+  if (!studentPaths.length && !referencePaths.length) return null;
+
+  return (
+    <figure className="shape-preview">
+      <svg viewBox="0 0 1024 1024" role="img" aria-label={`Shape comparison for ${expected}`}>
+        <g className="reference-shape">
+          {referencePaths.map((path, index) => <polyline key={`reference-${index}`} points={polylinePoints(path)} />)}
+        </g>
+        <g className="student-shape">
+          {studentPaths.map((path, index) => <polyline key={`student-${index}`} points={polylinePoints(path)} />)}
+        </g>
+      </svg>
+      <figcaption><span className="student-key">Your strokes</span>{!assessment.passed && <span className="reference-key">Expected shape</span>}</figcaption>
+    </figure>
+  );
+}
+
+function diagnosticAttempt(strokes: Stroke[]) {
+  const timestamps = strokes.flatMap((stroke) => stroke.points.map((point) => point.timestamp)).filter(Number.isFinite);
+  const origin = timestamps.length ? Math.min(...timestamps) : 0;
+  return strokes.map((stroke) => ({
+    width: stroke.width,
+    points: stroke.points.map((point) => ({
+      x: point.x,
+      y: point.y,
+      timestamp: Math.max(0, point.timestamp - origin),
+      ...(point.pressure === undefined ? {} : { pressure: point.pressure }),
+    })),
+  }));
 }
 
 const localRecognizer = new HanziLookupRecognizer();
@@ -71,7 +161,7 @@ export function HandwritingApp() {
   const [guideMode, setGuideMode] = useState<GuideMode>("boxes");
   const [stylusOnly, setStylusOnly] = useState(false);
   const [brushSize, setBrushSize] = useState(7);
-  const [acceptanceThreshold, setAcceptanceThreshold] = useState(15);
+  const [acceptanceThreshold, setAcceptanceThreshold] = useState(1);
   const [recognitionMethod, setRecognitionMethod] = useState<RecognitionMethod>("local");
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [undoStack, setUndoStack] = useState<Stroke[][]>([]);
@@ -84,6 +174,7 @@ export function HandwritingApp() {
   const [result, setResult] = useState<Result | null>(null);
   const [dimensions, setDimensions] = useState({ width: 600, height: 300 });
   const [debugSeparators, setDebugSeparators] = useState<number[]>([]);
+  const diagnosticsEnabled = process.env.NODE_ENV === "development";
 
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -465,16 +556,24 @@ export function HandwritingApp() {
     setMarking(true); setMessage(""); setResult(null);
     setRecognizerEvidence((evidence) => ({ ...evidence, [method]: null }));
     const characters = Array.from(target);
-    const currentWidth = hostRef.current?.getBoundingClientRect().width ?? dimensions.width;
+    const hostRect = hostRef.current?.getBoundingClientRect();
+    const currentWidth = hostRect?.width ?? dimensions.width;
+    const currentHeight = hostRect?.height ?? dimensions.height;
+    const markStrokes = cloneStrokes(strokesRef.current);
     const segmentation = guideMode === "boxes"
-      ? segmentByBoxes(strokesRef.current, characters.length, currentWidth)
-      : segmentByWhitespace(strokesRef.current, characters.length, currentWidth);
+      ? segmentByBoxes(markStrokes, characters.length, currentWidth)
+      : segmentByWhitespace(markStrokes, characters.length, currentWidth);
+    const regions = characterShapeRegions(characters.length, guideMode, currentWidth, currentHeight, segmentation.separators);
+    const attempt = diagnosticAttempt(markStrokes);
     setDebugSeparators(segmentation.separators);
     try {
       const predictions = await Promise.all(segmentation.groups.map((group) => selectedRecognizer.recognise(group, 15)));
       if (version !== requestVersionRef.current) return;
       setRecognizerEvidence((evidence) => ({ ...evidence, [method]: predictions }));
       const grade = gradeRankedCandidates(target, predictions, acceptanceThreshold);
+      const shapeAssessments = segmentation.groups.map((group, index) => assessCharacterShape(group, characters[index], regions[index]));
+      const correct = targetAwareCorrect(grade.correct, shapeAssessments, characters.length);
+      const status: ResultStatus = !grade.correct ? "unrecognized" : correct ? "correct" : "shape";
       const detectedCharacters = grade.detectedCharacters;
       const detected = detectedCharacters.map((character) => character || "No match").join(" · ");
       setResult({
@@ -483,15 +582,59 @@ export function HandwritingApp() {
         detectedCharacters,
         expectedRanks: grade.expectedRanks,
         threshold: acceptanceThreshold,
-        correct: grade.correct,
+        recognitionPassed: grade.correct,
+        shapeAssessments,
+        regions,
+        separators: [...segmentation.separators],
+        markDimensions: { width: currentWidth, height: currentHeight },
+        attempt,
+        predictions,
+        status,
         weakSplit: segmentation.weak,
         method,
       });
     } catch (error) {
-      if (version === requestVersionRef.current) setMessage(`Recognition failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (version === requestVersionRef.current) {
+        setMessage(`I couldn’t check this answer: ${error instanceof Error ? error.message : String(error)} Your writing is still here, so you can try marking it again.`);
+      }
     } finally {
       if (version === requestVersionRef.current) setMarking(false);
     }
+  }
+
+  function downloadDiagnostics() {
+    if (!diagnosticsEnabled || !target) return;
+    const payload = {
+      schemaVersion: 1,
+      createdAt: new Date().toISOString(),
+      target,
+      recognitionMethod,
+      guideMode,
+      acceptanceThreshold,
+      canvas: result?.markDimensions ?? dimensions,
+      rawAttempt: result?.attempt ?? diagnosticAttempt(strokesRef.current),
+      segmentation: result ? {
+        separators: result.separators,
+        weak: result.weakSplit,
+        regions: result.regions,
+      } : null,
+      candidates: result?.predictions ?? recognizerEvidence[recognitionMethod],
+      shapeAssessments: result?.shapeAssessments ?? null,
+      result: result ? {
+        detectedCharacters: result.detectedCharacters,
+        expectedRanks: result.expectedRanks,
+        status: result.status,
+      } : null,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `handwriting-diagnostics-${Date.now()}.json`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   if (!target) {
@@ -544,9 +687,9 @@ export function HandwritingApp() {
           </div>
           <label className="size-control"><span>Size</span><input type="range" min="2" max="14" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))}/><strong>{brushSize}</strong></label>
           <label className="threshold-control">
-            <span>Accept top</span>
+            <span>Advanced: rank</span>
             <select value={acceptanceThreshold} onChange={(event) => selectAcceptanceThreshold(Number(event.target.value))} aria-label="Accepted candidate rank">
-              {Array.from({ length: 15 }, (_, index) => <option value={index + 1} key={index + 1}>{index + 1}</option>)}
+              {Array.from({ length: 5 }, (_, index) => <option value={index + 1} key={index + 1}>Top {index + 1}</option>)}
             </select>
           </label>
           <div className="recognition-control">
@@ -603,20 +746,56 @@ export function HandwritingApp() {
 
       {message && <p ref={messageRef} id="mark-message" className="notice error" role="alert">{message}</p>}
       {result && (
-        <section ref={resultCardRef} id="mark-result" className={`result-card ${result.correct ? "correct" : "incorrect"}`} aria-live="polite">
-          <div className="result-heading"><span>{result.correct ? "✓" : "×"}</span><div><p className="eyebrow">Your result</p><h2 ref={resultHeadingRef} tabIndex={-1}>{result.correct ? "Correct!" : "Not quite"}</h2></div></div>
+        <section ref={resultCardRef} id="mark-result" className={`result-card ${result.status}`} aria-live="polite">
+          <div className="result-heading">
+            <span>{result.status === "correct" ? "✓" : result.status === "shape" ? "!" : "×"}</span>
+            <div>
+              <p className="eyebrow">Your result</p>
+              <h2 ref={resultHeadingRef} tabIndex={-1}>
+                {result.status === "correct" && "Correct!"}
+                {result.status === "shape" && "Recognized, but the writing shape needs work"}
+                {result.status === "unrecognized" && "Character not recognized"}
+              </h2>
+            </div>
+          </div>
           <p className="checked-method">Checked with {RECOGNITION_LABELS[result.method]}</p>
           <p className="detected-copy">What you wrote looks like: <strong>{result.detected}</strong></p>
           <div className="character-comparison">
-            {Array.from(result.expected).map((expected, index) => (
-              <div className={result.expectedRanks[index] !== null && result.expectedRanks[index]! <= result.threshold ? "match" : "mismatch"} key={index}>
-                <span>Expected</span><strong>{expected}</strong><span>Top guess</span><strong>{result.detectedCharacters[index] || "No match"}</strong>
-                <span>Expected rank</span><strong className="rank-value">{result.expectedRanks[index] ?? "Not found"}</strong>
-              </div>
-            ))}
+            {Array.from(result.expected).map((expected, index) => {
+              const rank = result.expectedRanks[index];
+              const recognitionMatched = rank !== null && rank <= result.threshold;
+              const assessment = result.shapeAssessments[index];
+              const passed = recognitionMatched && assessment?.passed;
+              const issues = Array.from(new Set((assessment?.failureReasons ?? []).map(readableShapeIssue)));
+              if (assessment && !assessment.passed && issues.length === 0) issues.push("The character’s structure did not match closely enough.");
+              const repair = assessment ? repairLabel(assessment.repairApplied) : null;
+              return (
+                <article className={passed ? "match" : "mismatch"} key={index}>
+                  <div className="character-facts">
+                    <span>Expected</span><strong>{expected}</strong>
+                    <span>Top guess</span><strong>{result.detectedCharacters[index] || "No match"}</strong>
+                    <span>Expected rank</span><strong className="rank-value">{rank ?? "Not found"}</strong>
+                    <span>Stroke count</span>
+                    <strong className="count-value">
+                      {assessment ? `${assessment.rawStrokeCount} observed / ${assessment.expectedStrokeCount} expected` : "Not checked"}
+                    </strong>
+                  </div>
+                  <p className={`shape-status ${assessment?.passed ? "passed" : "failed"}`}>
+                    {assessment?.passed ? "Shape passed" : "Shape needs work"}
+                  </p>
+                  {assessment && assessment.assessedStrokeCount !== assessment.rawStrokeCount && (
+                    <p className="shape-note">Checked as {assessment.assessedStrokeCount} strokes after capture repair.</p>
+                  )}
+                  {issues.length > 0 && <ul className="shape-issues">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}
+                  {assessment?.strokeOrderWarning && <p className="order-note">The stroke order was different. This is a tip only and did not cause the answer to fail.</p>}
+                  {repair && <p className="repair-note">{repair}</p>}
+                  {assessment && <ShapePreview assessment={assessment} expected={expected} />}
+                </article>
+              );
+            })}
           </div>
-          {result.correct && result.expectedRanks.some((rank) => rank !== 1) && (
-            <p className="rank-note">Accepted because every expected character appeared within the top {result.threshold} candidates.</p>
+          {result.recognitionPassed && result.expectedRanks.some((rank) => rank !== 1) && (
+            <p className="rank-note">Recognition passed because every expected character appeared within the top {result.threshold} candidates. Shape checking was graded separately.</p>
           )}
           {result.detectedCharacters.some((character) => !character) && (
             <p className="spacing-warning">I couldn’t find a clear match for one or more characters. Your writing is still here—write a little larger with separate pen strokes, then mark it again.</p>
@@ -626,10 +805,35 @@ export function HandwritingApp() {
         </section>
       )}
 
-      {process.env.NODE_ENV === "development" && target && (
-        <details className="debug-panel"><summary>Developer diagnostics</summary><pre>{JSON.stringify({ strokes: strokes.length, pointsPerStroke: strokes.map((stroke) => stroke.points.length), dimensions, separators: debugSeparators, mode: guideMode, acceptanceThreshold, recognitionMethod, recognizers: { local: { status: recognizerStates.local, error: recognizerErrors.local || null, evidence: recognizerEvidence.local }, myscript: { status: recognizerStates.myscript, error: recognizerErrors.myscript || null, evidence: recognizerEvidence.myscript } }, result }, null, 2)}</pre></details>
+      {diagnosticsEnabled && target && (
+        <details className="debug-panel">
+          <summary>Developer diagnostics</summary>
+          <p>Includes the raw stroke attempt, recognition candidates, segmentation, and shape assessment. It never includes service credentials.</p>
+          <button type="button" className="diagnostics-download" onClick={downloadDiagnostics}>Download diagnostics JSON</button>
+          <pre>{JSON.stringify({
+            strokes: strokes.length,
+            pointsPerStroke: strokes.map((stroke) => stroke.points.length),
+            dimensions,
+            separators: debugSeparators,
+            mode: guideMode,
+            acceptanceThreshold,
+            recognitionMethod,
+            recognizers: {
+              local: { status: recognizerStates.local, evidence: recognizerEvidence.local },
+              myscript: { status: recognizerStates.myscript, evidence: recognizerEvidence.myscript },
+            },
+            result: result ? {
+              expected: result.expected,
+              detectedCharacters: result.detectedCharacters,
+              expectedRanks: result.expectedRanks,
+              status: result.status,
+              regions: result.regions,
+              shapeAssessments: result.shapeAssessments,
+            } : null,
+          }, null, 2)}</pre>
+        </details>
       )}
-      <footer>Local WASM uses hanzi_lookup (LGPL) and Make Me a Hanzi-derived data (Arphic Public License). MyScript sends stroke data to the configured MyScript service when selected.</footer>
+      <footer>Local WASM uses hanzi_lookup (LGPL). Shape validation adapts Hanzi Writer’s MIT-licensed matcher. Character data is Make Me a Hanzi-derived (Arphic Public License). MyScript sends stroke data to the configured MyScript service when selected.</footer>
     </main>
   );
 }
