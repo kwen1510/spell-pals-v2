@@ -20,6 +20,6 @@ export function gradeRankedCandidates(
   return {
     correct: expectedRanks.every((rank) => rank !== null && rank <= safeThreshold),
     expectedRanks,
-    detectedCharacters: expectedCharacters.map((_, index) => candidateLists[index]?.[0]?.character ?? "?"),
+    detectedCharacters: expectedCharacters.map((_, index) => candidateLists[index]?.[0]?.character ?? ""),
   };
 }

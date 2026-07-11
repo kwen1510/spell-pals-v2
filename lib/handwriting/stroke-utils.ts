@@ -14,6 +14,13 @@ export function undoStroke(strokes: Stroke[]): Stroke[] {
   return strokes.slice(0, -1);
 }
 
+export function scaleStrokes(strokes: Stroke[], scaleX: number, scaleY: number): Stroke[] {
+  return strokes.map((stroke) => ({
+    ...stroke,
+    points: stroke.points.map((point) => ({ ...point, x: point.x * scaleX, y: point.y * scaleY })),
+  }));
+}
+
 export function strokeBounds(stroke: Stroke) {
   const xs = stroke.points.map((point) => point.x);
   const ys = stroke.points.map((point) => point.y);

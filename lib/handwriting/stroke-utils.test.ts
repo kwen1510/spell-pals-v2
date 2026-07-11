@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addPoint, cloneStrokes, undoStroke } from "./stroke-utils";
+import { addPoint, cloneStrokes, scaleStrokes, undoStroke } from "./stroke-utils";
 import type { Stroke } from "./types";
 
 const base: Stroke = { id: "s", width: 5, points: [{ x: 1, y: 1, timestamp: 0 }] };
@@ -21,5 +21,11 @@ describe("stroke utilities", () => {
     const copy = cloneStrokes([base]);
     copy[0].points[0].x = 99;
     expect(base.points[0].x).toBe(1);
+  });
+
+  it("rescales stored coordinates after an orientation or viewport change", () => {
+    const scaled = scaleStrokes([base], 2, 3);
+    expect(scaled[0].points[0]).toMatchObject({ x: 2, y: 3 });
+    expect(base.points[0]).toMatchObject({ x: 1, y: 1 });
   });
 });

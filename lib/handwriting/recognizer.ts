@@ -1,5 +1,4 @@
 import { convertStrokesForRecognizer } from "./coordinate-adapter";
-import { isSimplifiedCandidate } from "./simplified";
 import type { CharacterPrediction, HandwritingRecognizer, Stroke } from "./types";
 
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
@@ -12,7 +11,7 @@ type WorkerReply =
 let sharedWorker: Worker | null = null;
 let sharedReady: Promise<void> | null = null;
 let nextId = 0;
-const pending = new Map<number, { resolve: (value: CharacterPrediction[]) => void; reject: (reason: Error) => void }>();
+const pending = new Map<number, { resolve: (value: CharacterPrediction[]) => void; reject: (reason: Error) => void; maxResults: number }>();
 
 function getWorker() {
   if (!sharedWorker) {
@@ -23,8 +22,7 @@ function getWorker() {
         const request = pending.get(message.id);
         if (!request) return;
         pending.delete(message.id);
-        const simplified = message.matches.filter((match) => isSimplifiedCandidate(match.hanzi));
-        request.resolve(simplified.map((match, index) => ({ character: match.hanzi, score: match.score, rank: index + 1 })));
+        request.resolve(message.matches.slice(0, request.maxResults).map((match, index) => ({ character: match.hanzi, score: match.score, rank: index + 1 })));
       } else if (message.type === "error" && message.id != null) {
         const request = pending.get(message.id);
         pending.delete(message.id);
@@ -63,7 +61,7 @@ export class HanziLookupRecognizer implements HandwritingRecognizer {
     if (!input.length) return [];
     const id = ++nextId;
     return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
+      pending.set(id, { resolve, reject, maxResults });
       getWorker().postMessage({ type: "lookup", id, strokes: input, limit: Math.max(40, maxResults * 4) });
     });
   }

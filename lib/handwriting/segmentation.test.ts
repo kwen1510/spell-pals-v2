@@ -44,5 +44,18 @@ describe("segmentation", () => {
     ] };
     const result = segmentByBoxes([crossing], 2, 600);
     expect(result.groups[0][0].id).toBe("cross");
+    expect(result.groups[0][0].points.every((point) => point.x < 311)).toBe(true);
+  });
+
+  it("uses the starting box for a stroke with a distant outlier", () => {
+    const strokeWithOutlier: Stroke = { id: "outlier", width: 5, points: [
+      { x: 90, y: 10, timestamp: 0 }, { x: 110, y: 20, timestamp: 1 },
+      { x: 500, y: 30, timestamp: 2 }, { x: 510, y: 35, timestamp: 3 },
+      { x: 520, y: 40, timestamp: 4 },
+    ] };
+    const result = segmentByBoxes([strokeWithOutlier], 2, 600);
+    expect(result.groups[0][0].id).toBe("outlier");
+    expect(result.groups[1]).toHaveLength(0);
+    expect(result.groups[0][0].points).toHaveLength(2);
   });
 });

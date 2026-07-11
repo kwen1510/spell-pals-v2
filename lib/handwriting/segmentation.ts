@@ -8,13 +8,30 @@ function strokeCentreX(stroke: Stroke) {
 
 export function segmentByBoxes(strokes: Stroke[], characterCount: number, width: number): SegmentationResult {
   const groups = Array.from({ length: characterCount }, () => [] as Stroke[]);
+  const regionWidth = width / characterCount;
+  const tolerance = regionWidth * 0.035;
   for (const stroke of strokes) {
-    const index = Math.min(characterCount - 1, Math.max(0, Math.floor(strokeCentreX(stroke) / (width / characterCount))));
-    groups[index].push(stroke);
+    const pointCounts = Array.from({ length: characterCount }, () => 0);
+    for (const point of stroke.points) {
+      const region = Math.min(characterCount - 1, Math.max(0, Math.floor(point.x / regionWidth)));
+      pointCounts[region] += 1;
+    }
+    const majority = pointCounts.indexOf(Math.max(...pointCounts));
+    const startX = stroke.points[0]?.x ?? strokeCentreX(stroke);
+    const startRegion = Math.min(characterCount - 1, Math.max(0, Math.floor(startX / regionWidth)));
+    const nearestBoundaryDistance = Math.min(
+      Math.abs(startX - startRegion * regionWidth),
+      Math.abs(startX - (startRegion + 1) * regionWidth),
+    );
+    const index = nearestBoundaryDistance > tolerance ? startRegion : majority;
+    const left = index * regionWidth - tolerance;
+    const right = (index + 1) * regionWidth + tolerance;
+    const clippedPoints = stroke.points.filter((point) => point.x >= left && point.x <= right);
+    groups[index].push({ ...stroke, points: clippedPoints.length ? clippedPoints : stroke.points.slice(0, 1) });
   }
   return {
     groups,
-    separators: Array.from({ length: characterCount - 1 }, (_, index) => width * (index + 1) / characterCount),
+    separators: Array.from({ length: characterCount - 1 }, (_, index) => regionWidth * (index + 1)),
     weak: groups.some((group) => group.length === 0),
   };
 }

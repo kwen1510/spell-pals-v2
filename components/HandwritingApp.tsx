@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChineseGuide } from "./ChineseGuide";
 import { HanziLookupRecognizer } from "@/lib/handwriting/recognizer";
 import { gradeRankedCandidates } from "@/lib/handwriting/grading";
-import { cloneStrokes } from "@/lib/handwriting/stroke-utils";
+import { shouldIgnoreTouchInput } from "@/lib/handwriting/input-policy";
+import { cloneStrokes, scaleStrokes } from "@/lib/handwriting/stroke-utils";
 import { segmentByBoxes, segmentByWhitespace } from "@/lib/handwriting/segmentation";
 import type { Stroke, StrokePoint } from "@/lib/handwriting/types";
 
@@ -60,11 +61,20 @@ export function HandwritingApp() {
   const strokesRef = useRef<Stroke[]>([]);
   const activeStrokeRef = useRef<Stroke | null>(null);
   const activePointerRef = useRef<number | null>(null);
-  const eraserSnapshotRef = useRef<Stroke[] | null>(null);
+  const activeToolRef = useRef<Tool | null>(null);
+  const activeRectRef = useRef<DOMRect | null>(null);
+  const gestureBeforeRef = useRef<Stroke[] | null>(null);
+  const dimensionsRef = useRef({ width: 0, height: 0 });
+  const lastPenEventAtRef = useRef(0);
   const rafRef = useRef<number | null>(null);
   const requestVersionRef = useRef(0);
 
   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
+
+  const commitStrokes = useCallback((next: Stroke[]) => {
+    strokesRef.current = next;
+    setStrokes(next);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -138,21 +148,67 @@ export function HandwritingApp() {
     const resize = () => {
       const rect = host.getBoundingClientRect();
       const ratio = window.devicePixelRatio || 1;
+      const previous = dimensionsRef.current;
+      if (previous.width > 0 && previous.height > 0 && (Math.abs(previous.width - rect.width) > 0.5 || Math.abs(previous.height - rect.height) > 0.5)) {
+        const scaleX = rect.width / previous.width;
+        const scaleY = rect.height / previous.height;
+        if (strokesRef.current.length) commitStrokes(scaleStrokes(strokesRef.current, scaleX, scaleY));
+        if (activeStrokeRef.current) activeStrokeRef.current = scaleStrokes([activeStrokeRef.current], scaleX, scaleY)[0];
+      }
       canvas.width = Math.round(rect.width * ratio);
       canvas.height = Math.round(rect.height * ratio);
       canvas.style.width = `${rect.width}px`;
       canvas.style.height = `${rect.height}px`;
+      if (activePointerRef.current != null) activeRectRef.current = rect;
+      dimensionsRef.current = { width: rect.width, height: rect.height };
       setDimensions({ width: rect.width, height: rect.height });
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
     resize();
     return () => observer.disconnect();
+  }, [commitStrokes, target]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    const canvas = canvasRef.current;
+    if (!host || !canvas) return;
+    const suppress = (event: Event) => event.preventDefault();
+    const nonPassive: AddEventListenerOptions = { passive: false };
+    host.addEventListener("selectstart", suppress);
+    host.addEventListener("contextmenu", suppress);
+    host.addEventListener("dragstart", suppress);
+    canvas.addEventListener("touchstart", suppress, nonPassive);
+    canvas.addEventListener("touchmove", suppress, nonPassive);
+    canvas.addEventListener("gesturestart", suppress, nonPassive);
+    return () => {
+      host.removeEventListener("selectstart", suppress);
+      host.removeEventListener("contextmenu", suppress);
+      host.removeEventListener("dragstart", suppress);
+      canvas.removeEventListener("touchstart", suppress);
+      canvas.removeEventListener("touchmove", suppress);
+      canvas.removeEventListener("gesturestart", suppress);
+    };
   }, [target]);
 
+  function cancelActiveInput(restoreBefore = false) {
+    const canvas = canvasRef.current;
+    const pointerId = activePointerRef.current;
+    if (canvas && pointerId != null) {
+      try { if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId); } catch { /* Safari may already have released it. */ }
+    }
+    if (restoreBefore && gestureBeforeRef.current) commitStrokes(cloneStrokes(gestureBeforeRef.current));
+    activePointerRef.current = null;
+    activeStrokeRef.current = null;
+    activeToolRef.current = null;
+    activeRectRef.current = null;
+    gestureBeforeRef.current = null;
+  }
+
   function resetDrawing() {
+    cancelActiveInput();
     requestVersionRef.current += 1;
-    setStrokes([]); setUndoStack([]); setRedoStack([]); setResult(null); setMessage(""); setDebugSeparators([]);
+    commitStrokes([]); setUndoStack([]); setRedoStack([]); setResult(null); setMessage(""); setDebugSeparators([]);
   }
 
   function selectWord(word: string) {
@@ -161,33 +217,29 @@ export function HandwritingApp() {
     resetDrawing();
   }
 
-  function snapshot() {
-    setUndoStack((history) => [...history, cloneStrokes(strokesRef.current)]);
-    setRedoStack([]);
-  }
-
   function undo() {
     if (!undoStack.length) return;
+    cancelActiveInput(true);
     const previous = undoStack.at(-1)!;
     setRedoStack((history) => [...history, cloneStrokes(strokesRef.current)]);
     setUndoStack((history) => history.slice(0, -1));
-    setStrokes(cloneStrokes(previous)); setResult(null); setDebugSeparators([]);
+    commitStrokes(cloneStrokes(previous)); setResult(null); setDebugSeparators([]);
   }
 
   function redo() {
     if (!redoStack.length) return;
+    cancelActiveInput(true);
     const next = redoStack.at(-1)!;
     setUndoStack((history) => [...history, cloneStrokes(strokesRef.current)]);
     setRedoStack((history) => history.slice(0, -1));
-    setStrokes(cloneStrokes(next)); setResult(null); setDebugSeparators([]);
+    commitStrokes(cloneStrokes(next)); setResult(null); setDebugSeparators([]);
   }
 
-  function pointFromEvent(event: React.PointerEvent<HTMLCanvasElement>): StrokePoint {
-    const rect = event.currentTarget.getBoundingClientRect();
+  function pointFromPointer(event: PointerEvent | React.PointerEvent<HTMLCanvasElement>, rect: DOMRect): StrokePoint {
     return {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-      timestamp: performance.now(),
+      x: Math.max(0, Math.min(rect.width, event.clientX - rect.left)),
+      y: Math.max(0, Math.min(rect.height, event.clientY - rect.top)),
+      timestamp: event.timeStamp || performance.now(),
       pressure: event.pressure || undefined,
     };
   }
@@ -196,41 +248,52 @@ export function HandwritingApp() {
     const radius = Math.max(18, brushSize * 2.5);
     const remaining = strokesRef.current.filter((stroke) => !stroke.points.some((item) => Math.hypot(item.x - point.x, item.y - point.y) <= radius));
     if (remaining.length === strokesRef.current.length) return;
-    if (!eraserSnapshotRef.current) {
-      eraserSnapshotRef.current = cloneStrokes(strokesRef.current);
-      setUndoStack((history) => [...history, eraserSnapshotRef.current!]);
-      setRedoStack([]);
-    }
     strokesRef.current = remaining;
-    setStrokes(remaining);
+    scheduleDraw();
+  }
+
+  function suppressPointerDefaults(event: React.PointerEvent<HTMLCanvasElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    window.getSelection()?.removeAllRanges();
+  }
+
+  function likelyPalm(event: React.PointerEvent<HTMLCanvasElement>) {
+    return shouldIgnoreTouchInput(event, {
+      stylusOnly,
+      millisecondsSincePen: performance.now() - lastPenEventAtRef.current,
+    });
   }
 
   function pointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
-    if (activePointerRef.current != null || (stylusOnly && event.pointerType !== "pen")) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
+    suppressPointerDefaults(event);
+    if (event.pointerType === "pen") lastPenEventAtRef.current = performance.now();
+    if (activePointerRef.current != null || likelyPalm(event)) return;
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* Continue without capture on older Safari. */ }
     activePointerRef.current = event.pointerId;
+    activeToolRef.current = tool;
+    activeRectRef.current = event.currentTarget.getBoundingClientRect();
+    gestureBeforeRef.current = cloneStrokes(strokesRef.current);
     setResult(null); setMessage(""); setDebugSeparators([]);
-    const point = pointFromEvent(event);
+    const point = pointFromPointer(event, activeRectRef.current);
     if (tool === "eraser") {
-      eraserSnapshotRef.current = null;
       eraseAt(point);
     } else {
-      snapshot();
       activeStrokeRef.current = { id: crypto.randomUUID(), width: brushSize, points: [point] };
       scheduleDraw();
     }
   }
 
   function pointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
+    suppressPointerDefaults(event);
+    if (event.pointerType === "pen") lastPenEventAtRef.current = performance.now();
     if (activePointerRef.current !== event.pointerId) return;
-    event.preventDefault();
     const native = event.nativeEvent;
     const samples = typeof native.getCoalescedEvents === "function" ? native.getCoalescedEvents() : [native];
+    const rect = activeRectRef.current ?? event.currentTarget.getBoundingClientRect();
     for (const sample of samples) {
-      const rect = event.currentTarget.getBoundingClientRect();
-      const point = { x: sample.clientX - rect.left, y: sample.clientY - rect.top, timestamp: performance.now(), pressure: sample.pressure || undefined };
-      if (tool === "eraser") eraseAt(point);
+      const point = pointFromPointer(sample, rect);
+      if (activeToolRef.current === "eraser") eraseAt(point);
       else if (activeStrokeRef.current) {
         const last = activeStrokeRef.current.points.at(-1);
         if (!last || Math.hypot(last.x - point.x, last.y - point.y) >= 0.35) activeStrokeRef.current.points.push(point);
@@ -240,18 +303,42 @@ export function HandwritingApp() {
   }
 
   function finishPointer(event: React.PointerEvent<HTMLCanvasElement>) {
+    suppressPointerDefaults(event);
     if (activePointerRef.current !== event.pointerId) return;
-    event.preventDefault();
-    if (tool === "pen" && activeStrokeRef.current) {
+    const rect = activeRectRef.current ?? event.currentTarget.getBoundingClientRect();
+    if (activeToolRef.current === "pen" && activeStrokeRef.current) {
+      const finalPoint = pointFromPointer(event, rect);
+      const last = activeStrokeRef.current.points.at(-1);
+      if (!last || Math.hypot(last.x - finalPoint.x, last.y - finalPoint.y) >= 0.35) activeStrokeRef.current.points.push(finalPoint);
       const completed = activeStrokeRef.current;
       activeStrokeRef.current = null;
       const next = [...strokesRef.current, completed];
-      strokesRef.current = next;
-      setStrokes(next);
+      setUndoStack((history) => [...history, cloneStrokes(gestureBeforeRef.current ?? strokesRef.current)]);
+      setRedoStack([]);
+      commitStrokes(next);
+    } else if (activeToolRef.current === "eraser") {
+      const before = gestureBeforeRef.current ?? [];
+      const changed = before.length !== strokesRef.current.length;
+      if (changed) {
+        setUndoStack((history) => [...history, cloneStrokes(before)]);
+        setRedoStack([]);
+      }
+      commitStrokes(cloneStrokes(strokesRef.current));
     }
     activePointerRef.current = null;
-    eraserSnapshotRef.current = null;
-    try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* capture may already be lost */ }
+    activeToolRef.current = null;
+    activeRectRef.current = null;
+    gestureBeforeRef.current = null;
+    try { if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* capture may already be lost */ }
+    scheduleDraw();
+  }
+
+  function cancelPointer(event: React.PointerEvent<HTMLCanvasElement>) {
+    suppressPointerDefaults(event);
+    if (activePointerRef.current !== event.pointerId) return;
+    const before = gestureBeforeRef.current;
+    cancelActiveInput(false);
+    if (before) commitStrokes(cloneStrokes(before));
     scheduleDraw();
   }
 
@@ -262,16 +349,17 @@ export function HandwritingApp() {
     const version = ++requestVersionRef.current;
     setMarking(true); setMessage(""); setResult(null);
     const characters = Array.from(target);
+    const currentWidth = hostRef.current?.getBoundingClientRect().width ?? dimensions.width;
     const segmentation = guideMode === "boxes"
-      ? segmentByBoxes(strokesRef.current, characters.length, dimensions.width)
-      : segmentByWhitespace(strokesRef.current, characters.length, dimensions.width);
+      ? segmentByBoxes(strokesRef.current, characters.length, currentWidth)
+      : segmentByWhitespace(strokesRef.current, characters.length, currentWidth);
     setDebugSeparators(segmentation.separators);
     try {
       const predictions = await Promise.all(segmentation.groups.map((group) => recognizer.recognise(group, 15)));
       if (version !== requestVersionRef.current) return;
       const grade = gradeRankedCandidates(target, predictions, acceptanceThreshold);
       const detectedCharacters = grade.detectedCharacters;
-      const detected = detectedCharacters.join("");
+      const detected = detectedCharacters.map((character) => character || "No match").join(" · ");
       setResult({
         expected: target,
         detected,
@@ -339,8 +427,8 @@ export function HandwritingApp() {
             </select>
           </label>
           <div className="mode-toggle" aria-label="Writing guide mode">
-            <button className={guideMode === "free" ? "active" : ""} onClick={() => setGuideMode("free")}>Free canvas</button>
-            <button className={guideMode === "boxes" ? "active" : ""} onClick={() => setGuideMode("boxes")}>田字格</button>
+            <button className={guideMode === "free" ? "active" : ""} onClick={() => { cancelActiveInput(true); setGuideMode("free"); }}>Free canvas</button>
+            <button className={guideMode === "boxes" ? "active" : ""} onClick={() => { cancelActiveInput(true); setGuideMode("boxes"); }}>田字格</button>
           </div>
           <div className="tool-group history-group">
             <button className="tool-button" onClick={undo} disabled={!undoStack.length} aria-label="Undo"><Icon name="undo"/><span>Undo</span></button>
@@ -354,12 +442,13 @@ export function HandwritingApp() {
             <ChineseGuide count={characterCount} mode={guideMode}/>
             <canvas
               ref={canvasRef}
+              draggable={false}
               aria-label={`Write ${target} here. Use one region per Chinese character.`}
               onPointerDown={pointerDown}
               onPointerMove={pointerMove}
               onPointerUp={finishPointer}
-              onPointerCancel={finishPointer}
-              onLostPointerCapture={finishPointer}
+              onPointerCancel={cancelPointer}
+              onLostPointerCapture={cancelPointer}
             />
           </div>
         </div>
@@ -378,13 +467,16 @@ export function HandwritingApp() {
           <div className="character-comparison">
             {Array.from(result.expected).map((expected, index) => (
               <div className={result.expectedRanks[index] !== null && result.expectedRanks[index]! <= result.threshold ? "match" : "mismatch"} key={index}>
-                <span>Expected</span><strong>{expected}</strong><span>Top guess</span><strong>{result.detectedCharacters[index] ?? "?"}</strong>
+                <span>Expected</span><strong>{expected}</strong><span>Top guess</span><strong>{result.detectedCharacters[index] || "No match"}</strong>
                 <span>Expected rank</span><strong className="rank-value">{result.expectedRanks[index] ?? "Not found"}</strong>
               </div>
             ))}
           </div>
           {result.correct && result.expectedRanks.some((rank) => rank !== 1) && (
             <p className="rank-note">Accepted because every expected character appeared within the top {result.threshold} candidates.</p>
+          )}
+          {result.detectedCharacters.some((character) => !character) && (
+            <p className="spacing-warning">One character could not be recognized. Write it larger and use separate pen strokes, then try again.</p>
           )}
           {result.weakSplit && guideMode === "free" && <p className="spacing-warning">Tip: leave a clearer space between each character next time.</p>}
           <div className="result-actions"><button onClick={resetDrawing}>Try again</button><button onClick={() => { setTarget(null); resetDrawing(); }}>Choose another word</button></div>
