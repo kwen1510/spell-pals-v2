@@ -53,6 +53,8 @@ button:focus-visible, input:focus-visible { outline: 4px solid rgba(21,159,130,.
 .tool-button:disabled { cursor: not-allowed; opacity: .34; }
 .size-control { min-width: 92px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 0 8px; color: #536a61; font-size: .7rem; font-weight: 900; text-align: left; }
 .size-control input { grid-column: 1 / -1; width: 95px; accent-color: var(--teal); }
+.threshold-control { min-width: 76px; display: grid; align-content: center; justify-items: center; gap: 4px; color: #536a61; font-size: .7rem; font-weight: 900; }
+.threshold-control select { min-width: 58px; min-height: 34px; padding: 4px 8px; border: 2px solid #cfe3da; border-radius: 9px; background: white; color: var(--ink); font-weight: 900; }
 .mode-toggle { display: flex; align-items: center; padding: 4px; border: 2px solid #d8e8e1; border-radius: 13px; background: white; }
 .mode-toggle button { min-height: 40px; padding: 7px 12px; border: 0; border-radius: 9px; background: transparent; color: #60736c; font-size: .75rem; font-weight: 900; cursor: pointer; }
 .mode-toggle button.active { background: var(--ink); color: white; }
@@ -83,6 +85,8 @@ button:focus-visible, input:focus-visible { outline: 4px solid rgba(21,159,130,.
 .character-comparison > div.mismatch { border-color: #efb2a7; }
 .character-comparison span { color: var(--muted); font-size: .72rem; font-weight: 750; }
 .character-comparison strong { font: 700 1.6rem "Kaiti SC", STKaiti, serif; }
+.character-comparison .rank-value { align-self: center; font: 900 .92rem/1.2 Inter, ui-rounded, sans-serif; }
+.rank-note { padding: 11px 14px; border-radius: 11px; background: #ddf7e9; color: #176c56; font-weight: 800; }
 .spacing-warning { padding: 11px 14px; border-radius: 11px; background: #fff3ce; color: #76591c; font-weight: 750; }
 .result-actions { display: flex; gap: 10px; margin-top: 18px; }
 .result-actions button { padding: 10px 15px; border: 2px solid #bdd9cd; border-radius: 11px; background: white; font-weight: 850; cursor: pointer; }

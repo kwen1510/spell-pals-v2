@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChineseGuide } from "./ChineseGuide";
 import { HanziLookupRecognizer } from "@/lib/handwriting/recognizer";
+import { gradeRankedCandidates } from "@/lib/handwriting/grading";
 import { cloneStrokes } from "@/lib/handwriting/stroke-utils";
 import { segmentByBoxes, segmentByWhitespace } from "@/lib/handwriting/segmentation";
 import type { Stroke, StrokePoint } from "@/lib/handwriting/types";
@@ -15,6 +16,8 @@ interface Result {
   expected: string;
   detected: string;
   detectedCharacters: string[];
+  expectedRanks: Array<number | null>;
+  threshold: number;
   correct: boolean;
   weakSplit: boolean;
 }
@@ -40,6 +43,7 @@ export function HandwritingApp() {
   const [guideMode, setGuideMode] = useState<GuideMode>("boxes");
   const [stylusOnly, setStylusOnly] = useState(false);
   const [brushSize, setBrushSize] = useState(7);
+  const [acceptanceThreshold, setAcceptanceThreshold] = useState(5);
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [undoStack, setUndoStack] = useState<Stroke[][]>([]);
   const [redoStack, setRedoStack] = useState<Stroke[][]>([]);
@@ -263,11 +267,20 @@ export function HandwritingApp() {
       : segmentByWhitespace(strokesRef.current, characters.length, dimensions.width);
     setDebugSeparators(segmentation.separators);
     try {
-      const predictions = await Promise.all(segmentation.groups.map((group) => recognizer.recognise(group, 10)));
+      const predictions = await Promise.all(segmentation.groups.map((group) => recognizer.recognise(group, 15)));
       if (version !== requestVersionRef.current) return;
-      const detectedCharacters = predictions.map((items) => items[0]?.character ?? "?");
+      const grade = gradeRankedCandidates(target, predictions, acceptanceThreshold);
+      const detectedCharacters = grade.detectedCharacters;
       const detected = detectedCharacters.join("");
-      setResult({ expected: target, detected, detectedCharacters, correct: detected === target, weakSplit: segmentation.weak });
+      setResult({
+        expected: target,
+        detected,
+        detectedCharacters,
+        expectedRanks: grade.expectedRanks,
+        threshold: acceptanceThreshold,
+        correct: grade.correct,
+        weakSplit: segmentation.weak,
+      });
     } catch (error) {
       if (version === requestVersionRef.current) setMessage(`Recognition failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -319,6 +332,12 @@ export function HandwritingApp() {
             <button className={`tool-button ${!stylusOnly ? "active" : ""}`} onClick={() => setStylusOnly((value) => !value)} aria-label={stylusOnly ? "Pen only input" : "Finger and pen input"}><Icon name="hand"/><span>{stylusOnly ? "Pen only" : "Finger"}</span></button>
           </div>
           <label className="size-control"><span>Size</span><input type="range" min="2" max="14" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))}/><strong>{brushSize}</strong></label>
+          <label className="threshold-control">
+            <span>Accept top</span>
+            <select value={acceptanceThreshold} onChange={(event) => setAcceptanceThreshold(Number(event.target.value))} aria-label="Accepted candidate rank">
+              {Array.from({ length: 15 }, (_, index) => <option value={index + 1} key={index + 1}>{index + 1}</option>)}
+            </select>
+          </label>
           <div className="mode-toggle" aria-label="Writing guide mode">
             <button className={guideMode === "free" ? "active" : ""} onClick={() => setGuideMode("free")}>Free canvas</button>
             <button className={guideMode === "boxes" ? "active" : ""} onClick={() => setGuideMode("boxes")}>田字格</button>
@@ -358,11 +377,15 @@ export function HandwritingApp() {
           <p className="detected-copy">What you wrote looks like: <strong>{result.detected}</strong></p>
           <div className="character-comparison">
             {Array.from(result.expected).map((expected, index) => (
-              <div className={result.detectedCharacters[index] === expected ? "match" : "mismatch"} key={index}>
-                <span>Expected</span><strong>{expected}</strong><span>Detected</span><strong>{result.detectedCharacters[index] ?? "?"}</strong>
+              <div className={result.expectedRanks[index] !== null && result.expectedRanks[index]! <= result.threshold ? "match" : "mismatch"} key={index}>
+                <span>Expected</span><strong>{expected}</strong><span>Top guess</span><strong>{result.detectedCharacters[index] ?? "?"}</strong>
+                <span>Expected rank</span><strong className="rank-value">{result.expectedRanks[index] ?? "Not found"}</strong>
               </div>
             ))}
           </div>
+          {result.correct && result.expectedRanks.some((rank) => rank !== 1) && (
+            <p className="rank-note">Accepted because every expected character appeared within the top {result.threshold} candidates.</p>
+          )}
           {result.weakSplit && guideMode === "free" && <p className="spacing-warning">Tip: leave a clearer space between each character next time.</p>}
           <div className="result-actions"><button onClick={resetDrawing}>Try again</button><button onClick={() => { setTarget(null); resetDrawing(); }}>Choose another word</button></div>
         </section>
