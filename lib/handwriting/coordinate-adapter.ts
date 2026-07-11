@@ -5,6 +5,11 @@ export type RecognizerStrokeInput = number[][][];
 const SIMPLIFY_TOLERANCE = 2.25;
 const MAX_POINTS_PER_STROKE = 96;
 
+export interface RecognizerConversionOptions {
+  simplifyTolerance?: number;
+  maximumPointsPerStroke?: number;
+}
+
 function pointSegmentDistance(point: number[], start: number[], end: number[]) {
   const dx = end[0] - start[0];
   const dy = end[1] - start[1];
@@ -35,7 +40,14 @@ function capPointCount(points: number[][], maximum = MAX_POINTS_PER_STROKE) {
   return Array.from({ length: maximum }, (_, index) => points[Math.round((index / (maximum - 1)) * (points.length - 1))]);
 }
 
-export function convertStrokesForRecognizer(strokes: Stroke[]): RecognizerStrokeInput {
+export function convertStrokesForRecognizer(
+  strokes: Stroke[],
+  options: RecognizerConversionOptions = {},
+): RecognizerStrokeInput {
+  const requestedTolerance = options.simplifyTolerance ?? SIMPLIFY_TOLERANCE;
+  const simplifyTolerance = Number.isFinite(requestedTolerance) ? Math.max(0, requestedTolerance) : SIMPLIFY_TOLERANCE;
+  const requestedMaximum = options.maximumPointsPerStroke ?? MAX_POINTS_PER_STROKE;
+  const maximumPointsPerStroke = Number.isFinite(requestedMaximum) ? Math.max(2, Math.floor(requestedMaximum)) : MAX_POINTS_PER_STROKE;
   const usable = strokes
     .map((stroke) => ({ ...stroke, points: stroke.points.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y)) }))
     .filter((stroke) => stroke.points.length > 0);
@@ -69,7 +81,10 @@ export function convertStrokesForRecognizer(strokes: Stroke[]): RecognizerStroke
       ];
     }
     const deduplicated = converted.filter((point, index) => index === 0 || Math.hypot(point[0] - converted[index - 1][0], point[1] - converted[index - 1][1]) >= 0.6);
-    const simplified = capPointCount(simplifyRecognizerPoints(capPointCount(deduplicated, 512)));
+    const simplified = capPointCount(
+      simplifyRecognizerPoints(capPointCount(deduplicated, 512), simplifyTolerance),
+      maximumPointsPerStroke,
+    );
     if (simplified.length === 1) simplified.push([Math.min(255, simplified[0][0] + 0.75), Math.min(255, simplified[0][1] + 0.75)]);
     return simplified;
   });

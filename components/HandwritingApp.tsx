@@ -3,15 +3,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChineseGuide } from "./ChineseGuide";
 import { HanziLookupRecognizer } from "@/lib/handwriting/recognizer";
+import { MyScriptRecognizer } from "@/lib/handwriting/myscript-recognizer";
 import { gradeRankedCandidates } from "@/lib/handwriting/grading";
 import { shouldIgnoreTouchInput } from "@/lib/handwriting/input-policy";
 import { cloneStrokes, scaleStrokes } from "@/lib/handwriting/stroke-utils";
 import { segmentByBoxes, segmentByWhitespace } from "@/lib/handwriting/segmentation";
-import type { Stroke, StrokePoint } from "@/lib/handwriting/types";
+import type { CharacterPrediction, HandwritingRecognizer, Stroke, StrokePoint } from "@/lib/handwriting/types";
 
 const WORDS = ["听写", "老师", "飞机场"] as const;
 type Tool = "pen" | "eraser";
 type GuideMode = "free" | "boxes";
+type RecognitionMethod = "local" | "myscript";
+type RecognizerState = "loading" | "ready" | "error";
+
+const RECOGNITION_METHODS: RecognitionMethod[] = ["local", "myscript"];
+const RECOGNITION_LABELS: Record<RecognitionMethod, string> = {
+  local: "Local WASM",
+  myscript: "MyScript",
+};
 
 interface Result {
   expected: string;
@@ -21,9 +30,27 @@ interface Result {
   threshold: number;
   correct: boolean;
   weakSplit: boolean;
+  method: RecognitionMethod;
 }
 
-const recognizer = new HanziLookupRecognizer();
+const localRecognizer = new HanziLookupRecognizer();
+const myScriptRecognizer = new MyScriptRecognizer();
+const recognizers: Record<RecognitionMethod, HandwritingRecognizer> = {
+  local: localRecognizer,
+  myscript: myScriptRecognizer,
+};
+const initialisationPromises = new WeakMap<HandwritingRecognizer, Promise<void>>();
+
+function initialiseRecognizer(recognizer: HandwritingRecognizer) {
+  const existing = initialisationPromises.get(recognizer);
+  if (existing) return existing;
+  const initialisation = recognizer.initialise().catch((error) => {
+    initialisationPromises.delete(recognizer);
+    throw error;
+  });
+  initialisationPromises.set(recognizer, initialisation);
+  return initialisation;
+}
 
 function Icon({ name }: { name: string }) {
   const paths: Record<string, React.ReactNode> = {
@@ -44,12 +71,14 @@ export function HandwritingApp() {
   const [guideMode, setGuideMode] = useState<GuideMode>("boxes");
   const [stylusOnly, setStylusOnly] = useState(false);
   const [brushSize, setBrushSize] = useState(7);
-  const [acceptanceThreshold, setAcceptanceThreshold] = useState(5);
+  const [acceptanceThreshold, setAcceptanceThreshold] = useState(15);
+  const [recognitionMethod, setRecognitionMethod] = useState<RecognitionMethod>("local");
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [undoStack, setUndoStack] = useState<Stroke[][]>([]);
   const [redoStack, setRedoStack] = useState<Stroke[][]>([]);
-  const [recognizerState, setRecognizerState] = useState<"loading" | "ready" | "error">("loading");
-  const [recognizerError, setRecognizerError] = useState("");
+  const [recognizerStates, setRecognizerStates] = useState<Record<RecognitionMethod, RecognizerState>>({ local: "loading", myscript: "loading" });
+  const [recognizerErrors, setRecognizerErrors] = useState<Record<RecognitionMethod, string>>({ local: "", myscript: "" });
+  const [recognizerEvidence, setRecognizerEvidence] = useState<Record<RecognitionMethod, CharacterPrediction[][] | null>>({ local: null, myscript: null });
   const [marking, setMarking] = useState(false);
   const [message, setMessage] = useState("");
   const [result, setResult] = useState<Result | null>(null);
@@ -58,6 +87,9 @@ export function HandwritingApp() {
 
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const messageRef = useRef<HTMLParagraphElement>(null);
+  const resultCardRef = useRef<HTMLElement>(null);
+  const resultHeadingRef = useRef<HTMLHeadingElement>(null);
   const strokesRef = useRef<Stroke[]>([]);
   const activeStrokeRef = useRef<Stroke | null>(null);
   const activePointerRef = useRef<number | null>(null);
@@ -65,11 +97,50 @@ export function HandwritingApp() {
   const activeRectRef = useRef<DOMRect | null>(null);
   const gestureBeforeRef = useRef<Stroke[] | null>(null);
   const dimensionsRef = useRef({ width: 0, height: 0 });
-  const lastPenEventAtRef = useRef(0);
+  const lastPenEventAtRef = useRef(Number.NEGATIVE_INFINITY);
   const rafRef = useRef<number | null>(null);
   const requestVersionRef = useRef(0);
 
+  const recognizerState = recognizerStates[recognitionMethod];
+  const recognizerError = recognizerErrors[recognitionMethod];
+  const recognitionLabel = RECOGNITION_LABELS[recognitionMethod];
+
   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
+
+  useEffect(() => {
+    if (!result) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      const card = resultCardRef.current;
+      const heading = resultHeadingRef.current;
+      if (!card || !heading) return;
+
+      const prefersReducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+      card.scrollIntoView({
+        behavior: prefersReducedMotion ? "auto" : "smooth",
+        block: "start",
+      });
+
+      try {
+        heading.focus({ preventScroll: true });
+      } catch {
+        heading.focus();
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [result]);
+
+  useEffect(() => {
+    if (!message) return;
+    const frame = window.requestAnimationFrame(() => {
+      messageRef.current?.scrollIntoView({
+        behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "nearest",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [message]);
 
   const commitStrokes = useCallback((next: Stroke[]) => {
     strokesRef.current = next;
@@ -78,10 +149,16 @@ export function HandwritingApp() {
 
   useEffect(() => {
     let active = true;
-    recognizer.initialise().then(() => active && setRecognizerState("ready")).catch((error: Error) => {
-      if (!active) return;
-      setRecognizerState("error");
-      setRecognizerError(error.message);
+    RECOGNITION_METHODS.forEach((method) => {
+      initialiseRecognizer(recognizers[method]).then(() => {
+        if (!active) return;
+        setRecognizerStates((states) => ({ ...states, [method]: "ready" }));
+        setRecognizerErrors((errors) => ({ ...errors, [method]: "" }));
+      }).catch((error: Error) => {
+        if (!active) return;
+        setRecognizerStates((states) => ({ ...states, [method]: "error" }));
+        setRecognizerErrors((errors) => ({ ...errors, [method]: error.message }));
+      });
     });
     return () => { active = false; };
   }, []);
@@ -205,10 +282,20 @@ export function HandwritingApp() {
     gestureBeforeRef.current = null;
   }
 
+  function invalidateRecognition() {
+    requestVersionRef.current += 1;
+    RECOGNITION_METHODS.forEach((method) => recognizers[method].dispose?.());
+    setMarking(false);
+    setResult(null);
+    setMessage("");
+    setDebugSeparators([]);
+    setRecognizerEvidence({ local: null, myscript: null });
+  }
+
   function resetDrawing() {
     cancelActiveInput();
-    requestVersionRef.current += 1;
-    commitStrokes([]); setUndoStack([]); setRedoStack([]); setResult(null); setMessage(""); setDebugSeparators([]);
+    invalidateRecognition();
+    commitStrokes([]); setUndoStack([]); setRedoStack([]);
   }
 
   function selectWord(word: string) {
@@ -217,22 +304,44 @@ export function HandwritingApp() {
     resetDrawing();
   }
 
+  function selectRecognitionMethod(method: RecognitionMethod) {
+    if (method === recognitionMethod) return;
+    cancelActiveInput(true);
+    invalidateRecognition();
+    setRecognitionMethod(method);
+  }
+
+  function selectGuideMode(mode: GuideMode) {
+    if (mode === guideMode) return;
+    cancelActiveInput(true);
+    invalidateRecognition();
+    setGuideMode(mode);
+  }
+
+  function selectAcceptanceThreshold(threshold: number) {
+    if (threshold === acceptanceThreshold) return;
+    invalidateRecognition();
+    setAcceptanceThreshold(threshold);
+  }
+
   function undo() {
     if (!undoStack.length) return;
     cancelActiveInput(true);
+    invalidateRecognition();
     const previous = undoStack.at(-1)!;
     setRedoStack((history) => [...history, cloneStrokes(strokesRef.current)]);
     setUndoStack((history) => history.slice(0, -1));
-    commitStrokes(cloneStrokes(previous)); setResult(null); setDebugSeparators([]);
+    commitStrokes(cloneStrokes(previous));
   }
 
   function redo() {
     if (!redoStack.length) return;
     cancelActiveInput(true);
+    invalidateRecognition();
     const next = redoStack.at(-1)!;
     setUndoStack((history) => [...history, cloneStrokes(strokesRef.current)]);
     setRedoStack((history) => history.slice(0, -1));
-    commitStrokes(cloneStrokes(next)); setResult(null); setDebugSeparators([]);
+    commitStrokes(cloneStrokes(next));
   }
 
   function pointFromPointer(event: PointerEvent | React.PointerEvent<HTMLCanvasElement>, rect: DOMRect): StrokePoint {
@@ -274,7 +383,7 @@ export function HandwritingApp() {
     activeToolRef.current = tool;
     activeRectRef.current = event.currentTarget.getBoundingClientRect();
     gestureBeforeRef.current = cloneStrokes(strokesRef.current);
-    setResult(null); setMessage(""); setDebugSeparators([]);
+    invalidateRecognition();
     const point = pointFromPointer(event, activeRectRef.current);
     if (tool === "eraser") {
       eraseAt(point);
@@ -345,9 +454,16 @@ export function HandwritingApp() {
   async function mark() {
     if (!target || marking) return;
     if (!strokesRef.current.length) { setMessage("请先写下答案。 Write your answer first."); return; }
-    if (recognizerState !== "ready") { setMessage("The handwriting recogniser is not ready yet."); return; }
+    if (recognizerState !== "ready") {
+      const detail = recognizerState === "error" && recognizerError ? `: ${recognizerError}` : " yet";
+      setMessage(`${recognitionLabel} is not ready${detail}.`);
+      return;
+    }
+    const method = recognitionMethod;
+    const selectedRecognizer = recognizers[method];
     const version = ++requestVersionRef.current;
     setMarking(true); setMessage(""); setResult(null);
+    setRecognizerEvidence((evidence) => ({ ...evidence, [method]: null }));
     const characters = Array.from(target);
     const currentWidth = hostRef.current?.getBoundingClientRect().width ?? dimensions.width;
     const segmentation = guideMode === "boxes"
@@ -355,8 +471,9 @@ export function HandwritingApp() {
       : segmentByWhitespace(strokesRef.current, characters.length, currentWidth);
     setDebugSeparators(segmentation.separators);
     try {
-      const predictions = await Promise.all(segmentation.groups.map((group) => recognizer.recognise(group, 15)));
+      const predictions = await Promise.all(segmentation.groups.map((group) => selectedRecognizer.recognise(group, 15)));
       if (version !== requestVersionRef.current) return;
+      setRecognizerEvidence((evidence) => ({ ...evidence, [method]: predictions }));
       const grade = gradeRankedCandidates(target, predictions, acceptanceThreshold);
       const detectedCharacters = grade.detectedCharacters;
       const detected = detectedCharacters.map((character) => character || "No match").join(" · ");
@@ -368,6 +485,7 @@ export function HandwritingApp() {
         threshold: acceptanceThreshold,
         correct: grade.correct,
         weakSplit: segmentation.weak,
+        method,
       });
     } catch (error) {
       if (version === requestVersionRef.current) setMessage(`Recognition failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -393,11 +511,16 @@ export function HandwritingApp() {
               </button>
             ))}
           </div>
-          <p className={`engine-status ${recognizerState}`}>
-            {recognizerState === "loading" && "Loading handwriting recogniser…"}
-            {recognizerState === "ready" && "Handwriting recogniser ready · Works privately in this browser"}
-            {recognizerState === "error" && `Recognizer unavailable: ${recognizerError}`}
-          </p>
+          <div className="engine-status-list" aria-label="Handwriting recognizer status">
+            {RECOGNITION_METHODS.map((method) => (
+              <p className={`engine-status ${recognizerStates[method]}`} key={method}>
+                <strong>{RECOGNITION_LABELS[method]}</strong>
+                {recognizerStates[method] === "loading" && " · Loading…"}
+                {recognizerStates[method] === "ready" && (method === "local" ? " · Ready and private in this browser" : " · Ready")}
+                {recognizerStates[method] === "error" && ` · Unavailable: ${recognizerErrors[method]}`}
+              </p>
+            ))}
+          </div>
         </section>
       </main>
     );
@@ -409,7 +532,7 @@ export function HandwritingApp() {
       <header className="practice-header">
         <button className="back-button" onClick={() => { setTarget(null); resetDrawing(); }}>← Word list</button>
         <div><p className="eyebrow">Write this word</p><h1>{target}</h1></div>
-        <span className={`ready-pill ${recognizerState}`}>{recognizerState === "ready" ? "Ready" : recognizerState}</span>
+        <span className={`ready-pill ${recognizerState}`} title={recognizerError || undefined}>{recognitionLabel} · {recognizerState === "ready" ? "Ready" : recognizerState}</span>
       </header>
 
       <section className="keyboard-card">
@@ -422,13 +545,31 @@ export function HandwritingApp() {
           <label className="size-control"><span>Size</span><input type="range" min="2" max="14" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))}/><strong>{brushSize}</strong></label>
           <label className="threshold-control">
             <span>Accept top</span>
-            <select value={acceptanceThreshold} onChange={(event) => setAcceptanceThreshold(Number(event.target.value))} aria-label="Accepted candidate rank">
+            <select value={acceptanceThreshold} onChange={(event) => selectAcceptanceThreshold(Number(event.target.value))} aria-label="Accepted candidate rank">
               {Array.from({ length: 15 }, (_, index) => <option value={index + 1} key={index + 1}>{index + 1}</option>)}
             </select>
           </label>
+          <div className="recognition-control">
+            <span>Recognition</span>
+            <div className="recognition-toggle" role="group" aria-label="Recognition method">
+              {RECOGNITION_METHODS.map((method) => (
+                <button
+                  className={recognitionMethod === method ? "active" : ""}
+                  key={method}
+                  type="button"
+                  aria-pressed={recognitionMethod === method}
+                  title={recognizerErrors[method] || `${RECOGNITION_LABELS[method]} is ${recognizerStates[method]}`}
+                  onClick={() => selectRecognitionMethod(method)}
+                >
+                  {RECOGNITION_LABELS[method]}
+                </button>
+              ))}
+            </div>
+            <small className={recognizerState}>{recognizerState === "ready" ? "Ready" : recognizerState === "loading" ? "Loading…" : "Unavailable"}</small>
+          </div>
           <div className="mode-toggle" aria-label="Writing guide mode">
-            <button className={guideMode === "free" ? "active" : ""} onClick={() => { cancelActiveInput(true); setGuideMode("free"); }}>Free canvas</button>
-            <button className={guideMode === "boxes" ? "active" : ""} onClick={() => { cancelActiveInput(true); setGuideMode("boxes"); }}>田字格</button>
+            <button className={guideMode === "free" ? "active" : ""} onClick={() => selectGuideMode("free")}>Free canvas</button>
+            <button className={guideMode === "boxes" ? "active" : ""} onClick={() => selectGuideMode("boxes")}>田字格</button>
           </div>
           <div className="tool-group history-group">
             <button className="tool-button" onClick={undo} disabled={!undoStack.length} aria-label="Undo"><Icon name="undo"/><span>Undo</span></button>
@@ -451,18 +592,20 @@ export function HandwritingApp() {
               onLostPointerCapture={cancelPointer}
             />
           </div>
+          <div className="board-pan-strip" aria-hidden="true">Swipe here to move between squares ↔</div>
         </div>
 
         <div className="action-row">
           <p>{guideMode === "free" ? "Leave a clear vertical space between characters." : "Write one character inside each square."}</p>
-          <button className="mark-button" onClick={mark} disabled={marking || recognizerState !== "ready" || !strokes.length}><Icon name="check"/>{marking ? "Marking…" : "Mark answer"}</button>
+          <button className="mark-button" onClick={mark} disabled={marking || recognizerState !== "ready" || !strokes.length} aria-controls="mark-result"><Icon name="check"/>{marking ? "Marking…" : "Mark answer"}</button>
         </div>
       </section>
 
-      {message && <p className="notice error" role="alert">{message}</p>}
+      {message && <p ref={messageRef} id="mark-message" className="notice error" role="alert">{message}</p>}
       {result && (
-        <section className={`result-card ${result.correct ? "correct" : "incorrect"}`} aria-live="polite">
-          <div className="result-heading"><span>{result.correct ? "✓" : "×"}</span><div><p className="eyebrow">Your result</p><h2>{result.correct ? "Correct!" : "Not quite"}</h2></div></div>
+        <section ref={resultCardRef} id="mark-result" className={`result-card ${result.correct ? "correct" : "incorrect"}`} aria-live="polite">
+          <div className="result-heading"><span>{result.correct ? "✓" : "×"}</span><div><p className="eyebrow">Your result</p><h2 ref={resultHeadingRef} tabIndex={-1}>{result.correct ? "Correct!" : "Not quite"}</h2></div></div>
+          <p className="checked-method">Checked with {RECOGNITION_LABELS[result.method]}</p>
           <p className="detected-copy">What you wrote looks like: <strong>{result.detected}</strong></p>
           <div className="character-comparison">
             {Array.from(result.expected).map((expected, index) => (
@@ -476,7 +619,7 @@ export function HandwritingApp() {
             <p className="rank-note">Accepted because every expected character appeared within the top {result.threshold} candidates.</p>
           )}
           {result.detectedCharacters.some((character) => !character) && (
-            <p className="spacing-warning">One character could not be recognized. Write it larger and use separate pen strokes, then try again.</p>
+            <p className="spacing-warning">I couldn’t find a clear match for one or more characters. Your writing is still here—write a little larger with separate pen strokes, then mark it again.</p>
           )}
           {result.weakSplit && guideMode === "free" && <p className="spacing-warning">Tip: leave a clearer space between each character next time.</p>}
           <div className="result-actions"><button onClick={resetDrawing}>Try again</button><button onClick={() => { setTarget(null); resetDrawing(); }}>Choose another word</button></div>
@@ -484,9 +627,9 @@ export function HandwritingApp() {
       )}
 
       {process.env.NODE_ENV === "development" && target && (
-        <details className="debug-panel"><summary>Developer diagnostics</summary><pre>{JSON.stringify({ strokes: strokes.length, pointsPerStroke: strokes.map((stroke) => stroke.points.length), dimensions, separators: debugSeparators, mode: guideMode }, null, 2)}</pre></details>
+        <details className="debug-panel"><summary>Developer diagnostics</summary><pre>{JSON.stringify({ strokes: strokes.length, pointsPerStroke: strokes.map((stroke) => stroke.points.length), dimensions, separators: debugSeparators, mode: guideMode, acceptanceThreshold, recognitionMethod, recognizers: { local: { status: recognizerStates.local, error: recognizerErrors.local || null, evidence: recognizerEvidence.local }, myscript: { status: recognizerStates.myscript, error: recognizerErrors.myscript || null, evidence: recognizerEvidence.myscript } }, result }, null, 2)}</pre></details>
       )}
-      <footer>Recognition powered locally by hanzi_lookup (LGPL) and Make Me a Hanzi-derived data (Arphic Public License). No handwriting leaves this device.</footer>
+      <footer>Local WASM uses hanzi_lookup (LGPL) and Make Me a Hanzi-derived data (Arphic Public License). MyScript sends stroke data to the configured MyScript service when selected.</footer>
     </main>
   );
 }

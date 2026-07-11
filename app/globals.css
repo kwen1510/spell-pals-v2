@@ -11,9 +11,9 @@
 * { box-sizing: border-box; }
 html { min-height: 100%; background: #f4fbf7; }
 body { margin: 0; color: var(--ink); font-family: Inter, ui-rounded, "SF Pro Rounded", "PingFang SC", "Microsoft YaHei", sans-serif; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { color: inherit; }
-button:focus-visible, input:focus-visible { outline: 4px solid rgba(21,159,130,.24); outline-offset: 3px; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 4px solid rgba(21,159,130,.24); outline-offset: 3px; }
 
 .home-shell, .practice-shell { min-height: 100vh; background: radial-gradient(circle at 12% 8%, #fff4cf 0 7%, transparent 22%), radial-gradient(circle at 88% 90%, #cff3e7 0 9%, transparent 25%), #f7fbf8; }
 .home-shell { display: grid; place-items: center; padding: 32px 20px; }
@@ -28,8 +28,11 @@ button:focus-visible, input:focus-visible { outline: 4px solid rgba(21,159,130,.
 .word-card strong { display: block; margin: 18px 0 12px; font-family: "Kaiti SC", STKaiti, serif; font-size: clamp(2.4rem, 5vw, 4rem); font-weight: 700; }
 .word-card small { color: var(--muted); font-weight: 700; }
 .word-number { position: absolute; top: 14px; left: 16px; color: #9ab2a8; font-size: .75rem; font-weight: 900; }
-.engine-status { margin: 28px 0 0; color: var(--muted); font-size: .86rem; font-weight: 700; }
+.engine-status-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 18px; margin-top: 28px; }
+.engine-status { margin: 0; color: var(--muted); font-size: .86rem; font-weight: 700; }
+.engine-status strong { color: var(--ink); }
 .engine-status.ready::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: #22a66f; }
+.engine-status.loading::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: #d8a22f; }
 .engine-status.error { color: #aa3b31; }
 
 .practice-shell { padding: 22px clamp(14px, 3vw, 42px) 34px; }
@@ -38,6 +41,7 @@ button:focus-visible, input:focus-visible { outline: 4px solid rgba(21,159,130,.
 .practice-header h1 { margin: 0; font: 700 clamp(2rem, 5vw, 3.6rem)/1 "Kaiti SC", STKaiti, serif; }
 .back-button { justify-self: start; padding: 11px 16px; border: 2px solid #cfe3da; border-radius: 14px; background: white; font-weight: 850; cursor: pointer; }
 .ready-pill { justify-self: end; padding: 8px 12px; border-radius: 999px; background: #e4f7ef; color: #176c56; font-size: .78rem; font-weight: 900; text-transform: capitalize; }
+.ready-pill.loading { background: #fff3ce; color: #76591c; }
 .ready-pill.error { background: #ffe5df; color: #9c382d; }
 
 .keyboard-card, .result-card, .debug-panel { width: min(1320px, 100%); margin-inline: auto; border: 2px solid #d5e8df; border-radius: 22px; background: rgba(255,255,255,.96); box-shadow: 0 16px 45px rgba(33,70,58,.1); }
@@ -55,16 +59,26 @@ button:focus-visible, input:focus-visible { outline: 4px solid rgba(21,159,130,.
 .size-control input { grid-column: 1 / -1; width: 95px; accent-color: var(--teal); }
 .threshold-control { min-width: 76px; display: grid; align-content: center; justify-items: center; gap: 4px; color: #536a61; font-size: .7rem; font-weight: 900; }
 .threshold-control select { min-width: 58px; min-height: 34px; padding: 4px 8px; border: 2px solid #cfe3da; border-radius: 9px; background: white; color: var(--ink); font-weight: 900; }
+.recognition-control { min-width: 208px; display: grid; grid-template-columns: 1fr auto; align-content: center; gap: 3px 8px; color: #536a61; font-size: .7rem; font-weight: 900; }
+.recognition-control > span { align-self: center; }
+.recognition-control > small { align-self: center; justify-self: end; text-transform: capitalize; }
+.recognition-control > small.ready { color: #176c56; }
+.recognition-control > small.loading { color: #8a671f; }
+.recognition-control > small.error { color: #a74337; }
+.recognition-toggle { grid-column: 1 / -1; display: flex; padding: 3px; border: 2px solid #d8e8e1; border-radius: 11px; background: white; }
+.recognition-toggle button { flex: 1; min-height: 34px; padding: 5px 9px; border: 0; border-radius: 7px; background: transparent; color: #60736c; font-size: .72rem; font-weight: 900; white-space: nowrap; cursor: pointer; }
+.recognition-toggle button.active { background: var(--teal-dark); color: white; }
 .mode-toggle { display: flex; align-items: center; padding: 4px; border: 2px solid #d8e8e1; border-radius: 13px; background: white; }
 .mode-toggle button { min-height: 40px; padding: 7px 12px; border: 0; border-radius: 9px; background: transparent; color: #60736c; font-size: .75rem; font-weight: 900; cursor: pointer; }
 .mode-toggle button.active { background: var(--ink); color: white; }
 
 .board-scroller { overflow-x: auto; overscroll-behavior-x: contain; padding: 18px; background: #eaf5f0; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-.canvas-host { --character-count: 2; position: relative; width: 100%; min-width: calc(var(--character-count) * 280px); aspect-ratio: var(--character-count) / 1; max-height: 58vh; margin: auto; background: #fffefb; box-shadow: 0 9px 0 rgba(56,109,91,.12), 0 20px 35px rgba(24,61,49,.12); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.canvas-host { --character-count: 2; position: relative; width: 100%; min-width: calc(var(--character-count) * 280px); aspect-ratio: var(--character-count) / 1; margin: auto; background: #fffefb; box-shadow: 0 9px 0 rgba(56,109,91,.12), 0 20px 35px rgba(24,61,49,.12); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .canvas-host, .canvas-host * { -webkit-user-drag: none; }
 .canvas-host canvas, .guide-svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
 .canvas-host canvas { z-index: 2; cursor: crosshair; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .guide-svg { z-index: 1; overflow: visible; pointer-events: none; user-select: none; -webkit-user-select: none; }
+.board-pan-strip { display: none; }
 .action-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 17px; }
 .action-row p { margin: 0; color: var(--muted); font-size: .86rem; font-weight: 750; }
 .mark-button { min-height: 52px; display: flex; align-items: center; gap: 9px; padding: 10px 25px; border: 0; border-radius: 15px; background: var(--teal); color: white; font-weight: 950; cursor: pointer; box-shadow: 0 6px 0 #08705a; }
@@ -72,13 +86,15 @@ button:focus-visible, input:focus-visible { outline: 4px solid rgba(21,159,130,.
 
 .notice { width: min(1320px, 100%); margin: 14px auto; padding: 14px 18px; border-radius: 14px; font-weight: 800; }
 .notice.error { border: 2px solid #f1b3a6; background: #fff0eb; color: #9b3d32; }
-.result-card { margin-top: 18px; padding: clamp(20px, 4vw, 34px); }
+.result-card { margin-top: 18px; padding: clamp(20px, 4vw, 34px); scroll-margin-top: max(16px, env(safe-area-inset-top)); }
 .result-card.correct { border-color: #83d7ad; background: #f4fff8; }
 .result-card.incorrect { border-color: #efad9f; background: #fff9f6; }
 .result-heading { display: flex; align-items: center; gap: 14px; }
 .result-heading > span { display: grid; width: 54px; height: 54px; place-items: center; border-radius: 50%; background: var(--teal); color: white; font-size: 2rem; font-weight: 900; }
 .incorrect .result-heading > span { background: var(--coral); }
 .result-heading h2 { margin: 0; font-size: 2rem; }
+.result-heading h2:focus { outline: 3px solid rgba(21,159,130,.28); outline-offset: 5px; border-radius: 4px; }
+.checked-method { display: inline-block; margin: 14px 0 0; padding: 6px 10px; border-radius: 999px; background: #e8f4ef; color: #4e675e; font-size: .76rem; font-weight: 850; }
 .detected-copy { margin: 21px 0; font-size: 1.15rem; }
 .detected-copy strong { margin-left: 8px; font: 700 2.2rem "Kaiti SC", STKaiti, serif; }
 .character-comparison { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -89,12 +105,18 @@ button:focus-visible, input:focus-visible { outline: 4px solid rgba(21,159,130,.
 .character-comparison .rank-value { align-self: center; font: 900 .92rem/1.2 Inter, ui-rounded, sans-serif; }
 .rank-note { padding: 11px 14px; border-radius: 11px; background: #ddf7e9; color: #176c56; font-weight: 800; }
 .spacing-warning { padding: 11px 14px; border-radius: 11px; background: #fff3ce; color: #76591c; font-weight: 750; }
-.result-actions { display: flex; gap: 10px; margin-top: 18px; }
+.result-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .result-actions button { padding: 10px 15px; border: 2px solid #bdd9cd; border-radius: 11px; background: white; font-weight: 850; cursor: pointer; }
 .debug-panel { margin-top: 15px; padding: 14px 18px; font-size: .8rem; }
 .debug-panel summary { font-weight: 900; cursor: pointer; }
 .debug-panel pre { overflow: auto; }
 footer { width: min(1320px, 100%); margin: 25px auto 0; color: #72857d; font-size: .72rem; text-align: center; }
+
+@media (max-width: 1100px) {
+  .toolbar { overflow-x: auto; align-items: center; }
+  .history-group { margin-left: 0; }
+  .board-pan-strip { position: sticky; left: 0; display: flex; width: min(100%, 420px); min-height: 38px; margin: 16px auto -4px; align-items: center; justify-content: center; border: 2px dashed #b8d9cc; border-radius: 12px; background: rgba(255,255,255,.9); color: #60736c; font-size: .75rem; font-weight: 850; touch-action: pan-x; }
+}
 
 @media (max-width: 800px) {
   .word-grid { grid-template-columns: 1fr; }
@@ -103,8 +125,6 @@ footer { width: min(1320px, 100%); margin: 25px auto 0; color: #72857d; font-siz
   .practice-header { grid-template-columns: 1fr auto; }
   .practice-header > div { grid-row: 2; grid-column: 1 / -1; margin-top: 10px; }
   .ready-pill { grid-column: 2; }
-  .toolbar { overflow-x: auto; align-items: center; }
-  .history-group { margin-left: 0; }
   .action-row { align-items: stretch; flex-direction: column; }
   .mark-button { justify-content: center; }
 }
