@@ -1,0 +1,25 @@
+{
+  "name": "hanzi-spelling-checker",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "build:pages": "PAGES_BASE_PATH=/spell-pals-v2 NEXT_PUBLIC_BASE_PATH=/spell-pals-v2 next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "next": "^15.5.14",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.12",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.5.4",
+    "vitest": "^3.2.4"
+  }
+}
