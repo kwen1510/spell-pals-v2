@@ -72,15 +72,21 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 4px s
 .mode-toggle button { min-height: 40px; padding: 7px 12px; border: 0; border-radius: 9px; background: transparent; color: #60736c; font-size: .75rem; font-weight: 900; cursor: pointer; }
 .mode-toggle button.active { background: var(--ink); color: white; }
 
-.board-scroller { overflow-x: auto; overscroll-behavior-x: contain; padding: 18px; background: #eaf5f0; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-.canvas-host { --character-count: 2; position: relative; width: 100%; min-width: calc(var(--character-count) * 280px); aspect-ratio: var(--character-count) / 1; margin: auto; background: #fffefb; box-shadow: 0 9px 0 rgba(56,109,91,.12), 0 20px 35px rgba(24,61,49,.12); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.board-scroller { overflow-x: auto; overscroll-behavior-x: contain; padding: 18px; background: #eaf5f0; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-overflow-scrolling: touch; }
+.canvas-host { --character-count: 2; --minimum-square-size: 280px; position: relative; width: max(100%, calc(var(--character-count) * var(--minimum-square-size))); min-width: 0; height: auto; aspect-ratio: var(--character-count) / 1; flex: none; margin: auto; background: #fffefb; box-shadow: 0 9px 0 rgba(56,109,91,.12), 0 20px 35px rgba(24,61,49,.12); touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .canvas-host, .canvas-host * { -webkit-user-drag: none; }
-.canvas-host canvas, .guide-svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.canvas-host canvas, .guide-svg, .trace-model-svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
 .canvas-host canvas { z-index: 2; cursor: crosshair; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .guide-svg { z-index: 1; overflow: visible; pointer-events: none; user-select: none; -webkit-user-select: none; }
+.trace-model-svg { z-index: 1; overflow: hidden; pointer-events: none; user-select: none; -webkit-user-select: none; }
+.trace-model-svg polyline { fill: none; stroke: #ef8b75; stroke-width: 18; stroke-linecap: round; stroke-linejoin: round; opacity: .28; }
 .board-pan-strip { display: none; }
 .action-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 17px; }
 .action-row p { margin: 0; color: var(--muted); font-size: .86rem; font-weight: 750; }
+.action-row p:focus { outline: 3px solid rgba(21,159,130,.28); outline-offset: 5px; border-radius: 5px; }
+.trace-active-copy { color: #9b4b3d; }
+.action-buttons { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.hide-trace-button { min-height: 46px; padding: 9px 15px; border: 2px solid #d5bdb6; border-radius: 13px; background: white; color: #8f493d; font-weight: 850; cursor: pointer; }
 .mark-button { min-height: 52px; display: flex; align-items: center; gap: 9px; padding: 10px 25px; border: 0; border-radius: 15px; background: var(--teal); color: white; font-weight: 950; cursor: pointer; box-shadow: 0 6px 0 #08705a; }
 .mark-button:disabled { opacity: .45; cursor: not-allowed; }
 
@@ -90,9 +96,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 4px s
 .result-card.correct { border-color: #83d7ad; background: #f4fff8; }
 .result-card.shape { border-color: #e3ba68; background: #fffcf2; }
 .result-card.unrecognized { border-color: #efad9f; background: #fff9f6; }
+.result-card.incomplete { border-color: #e3ba68; background: #fffcf2; }
 .result-heading { display: flex; align-items: center; gap: 14px; }
 .result-heading > span { display: grid; width: 54px; height: 54px; place-items: center; border-radius: 50%; background: var(--teal); color: white; font-size: 2rem; font-weight: 900; }
-.shape .result-heading > span { background: #d99a22; }
+.shape .result-heading > span, .incomplete .result-heading > span { background: #d99a22; }
 .unrecognized .result-heading > span { background: var(--coral); }
 .result-heading h2 { margin: 0; font-size: clamp(1.5rem, 3.5vw, 2rem); }
 .result-heading h2:focus { outline: 3px solid rgba(21,159,130,.28); outline-offset: 5px; border-radius: 4px; }
@@ -115,18 +122,32 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 4px s
 .shape-note, .order-note, .repair-note { margin: 8px 0 0; padding: 8px 10px; border-radius: 9px; font-size: .76rem; font-weight: 750; line-height: 1.4; }
 .shape-note, .repair-note { background: #edf6f2; color: #536a61; }
 .order-note { background: #fff3ce; color: #76591c; }
+.component-breakdown, .stroke-tips { margin-top: 10px; padding: 10px; border-radius: 10px; }
+.component-breakdown { background: #f3f8f5; }
+.component-breakdown > p, .stroke-tips > p { margin: 0 0 7px; color: #536a61; font-size: .72rem; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; }
+.component-breakdown > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.component-breakdown span { padding: 5px 8px; border: 1px solid #c9dfd6; border-radius: 999px; background: white; color: #4f685f; font-size: .72rem; }
+.component-breakdown span.passed { border-color: #9dd7bd; color: #176c56; }
+.component-breakdown span.failed { border-color: #efad9f; background: #fff1ed; color: #963d31; }
+.component-breakdown b { font-family: "Kaiti SC", STKaiti, serif; font-size: 1rem; }
+.stroke-tips { background: #fff3ce; color: #76591c; }
+.stroke-tips ul { margin: 0; padding-left: 18px; font-size: .76rem; font-weight: 750; line-height: 1.45; }
 .shape-preview { display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center; gap: 10px; margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #deebe5; }
 .shape-preview svg { width: 112px; aspect-ratio: 1; border: 1px solid #dbe9e3; border-radius: 10px; background: #fffefb; }
 .shape-preview polyline { fill: none; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .shape-preview .reference-shape polyline { stroke: var(--coral); stroke-width: 5; opacity: .62; }
 .shape-preview .student-shape polyline { stroke: var(--teal-dark); stroke-width: 4; opacity: .92; }
+.shape-preview .preview-guides line { stroke: #a9eadb; stroke-width: 2; stroke-dasharray: 22 22; }
+.shape-preview .problem-quadrants rect { fill: #ffb6a6; opacity: .2; }
 .shape-preview figcaption { display: grid; gap: 7px; color: var(--muted); font-size: .7rem; font-weight: 800; }
 .shape-preview figcaption span::before { content: ""; display: inline-block; width: 14px; height: 4px; margin-right: 7px; border-radius: 99px; vertical-align: middle; background: var(--teal-dark); }
 .shape-preview figcaption .reference-key::before { background: var(--coral); }
+.shape-preview figcaption .quadrant-key::before { height: 10px; background: #ffb6a6; opacity: .65; }
 .rank-note { padding: 11px 14px; border-radius: 11px; background: #ddf7e9; color: #176c56; font-weight: 800; }
 .spacing-warning { padding: 11px 14px; border-radius: 11px; background: #fff3ce; color: #76591c; font-weight: 750; }
 .result-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
 .result-actions button { padding: 10px 15px; border: 2px solid #bdd9cd; border-radius: 11px; background: white; font-weight: 850; cursor: pointer; }
+.result-actions .trace-practice-button { border-color: #e6a995; background: #fff1eb; color: #8f493d; }
 .debug-panel { margin-top: 15px; padding: 14px 18px; font-size: .8rem; }
 .debug-panel summary { font-weight: 900; cursor: pointer; }
 .debug-panel p { color: var(--muted); line-height: 1.45; }
@@ -148,6 +169,8 @@ footer { width: min(1320px, 100%); margin: 25px auto 0; color: #72857d; font-siz
   .practice-header > div { grid-row: 2; grid-column: 1 / -1; margin-top: 10px; }
   .ready-pill { grid-column: 2; }
   .action-row { align-items: stretch; flex-direction: column; }
+  .action-buttons { justify-content: stretch; }
+  .action-buttons > button { flex: 1; justify-content: center; }
   .mark-button { justify-content: center; }
 }
 

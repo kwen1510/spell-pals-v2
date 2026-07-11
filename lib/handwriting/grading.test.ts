@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gradeRankedCandidates, targetAwareCorrect } from "./grading";
+import { gradeRankedCandidates, markingStatus, targetAwareCorrect } from "./grading";
 import type { CharacterPrediction } from "./types";
 
 function candidates(...characters: string[]): CharacterPrediction[] {
@@ -39,5 +39,20 @@ describe("target-aware grading", () => {
   it("fails closed when a character assessment is missing", () => {
     expect(targetAwareCorrect(true, [{ passed: true }], 2)).toBe(false);
     expect(targetAwareCorrect(true, [], 1)).toBe(false);
+  });
+
+  it("uses the completed visual shape as the gate, independent of stroke-count tips", () => {
+    expect(markingStatus(true, [{ passed: true }], 1)).toBe("correct");
+    expect(markingStatus(true, [{ passed: false }], 1)).toBe("shape");
+    expect(markingStatus(false, [{ passed: true }], 1)).toBe("unrecognized");
+  });
+
+  it("reports an unfinished square before recognition or shape failure", () => {
+    expect(markingStatus(false, [{ passed: true }, { passed: false, blank: true }], 2)).toBe("incomplete");
+  });
+
+  it("fails closed when the number of visual assessments is wrong", () => {
+    expect(markingStatus(true, [{ passed: true }], 2)).toBe("shape");
+    expect(markingStatus(true, [{ passed: true }, { passed: true }], 1)).toBe("shape");
   });
 });

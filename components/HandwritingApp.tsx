@@ -1,13 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChineseGuide } from "./ChineseGuide";
+import { ChineseGuide, guideBoardStyle } from "./ChineseGuide";
+import { TraceModel } from "./TraceModel";
 import { HanziLookupRecognizer } from "@/lib/handwriting/recognizer";
 import { MyScriptRecognizer } from "@/lib/handwriting/myscript-recognizer";
-import { gradeRankedCandidates, targetAwareCorrect } from "@/lib/handwriting/grading";
+import { gradeRankedCandidates, markingStatus, type MarkingStatus } from "@/lib/handwriting/grading";
 import { shouldIgnoreTouchInput } from "@/lib/handwriting/input-policy";
 import { characterShapeRegions } from "@/lib/handwriting/shape-regions";
 import { assessCharacterShape } from "@/lib/handwriting/shape-validator";
+import { assessWholeCharacterShape } from "@/lib/handwriting/whole-shape-validator";
 import { cloneStrokes, scaleStrokes } from "@/lib/handwriting/stroke-utils";
 import { segmentByBoxes, segmentByWhitespace } from "@/lib/handwriting/segmentation";
 import type { CharacterPrediction, HandwritingRecognizer, Stroke, StrokePoint } from "@/lib/handwriting/types";
@@ -17,8 +19,9 @@ type Tool = "pen" | "eraser";
 type GuideMode = "free" | "boxes";
 type RecognitionMethod = "local" | "myscript";
 type RecognizerState = "loading" | "ready" | "error";
-type ResultStatus = "correct" | "shape" | "unrecognized";
-type ShapeAssessment = ReturnType<typeof assessCharacterShape>;
+type ResultStatus = MarkingStatus;
+type ShapeAssessment = ReturnType<typeof assessWholeCharacterShape>;
+type StrokeAssessment = ReturnType<typeof assessCharacterShape>;
 type DiagnosticAttempt = ReturnType<typeof diagnosticAttempt>;
 
 const RECOGNITION_METHODS: RecognitionMethod[] = ["local", "myscript"];
@@ -35,6 +38,7 @@ interface Result {
   threshold: number;
   recognitionPassed: boolean;
   shapeAssessments: ShapeAssessment[];
+  strokeAssessments: StrokeAssessment[];
   regions: ReturnType<typeof characterShapeRegions>;
   separators: number[];
   markDimensions: { width: number; height: number };
@@ -61,14 +65,14 @@ function polylinePoints(path: unknown) {
   return path.map(pointPair).filter((point): point is [number, number] => point !== null).map(([x, y]) => `${x},${y}`).join(" ");
 }
 
-function readableShapeIssue(reason: string) {
+function readableStrokeIssue(reason: string) {
   const normalized = reason.toLowerCase().replaceAll("_", " ").replaceAll("-", " ");
   const labels: Array<[RegExp, string]> = [
     [/reference|unsupported|missing data/, "Shape reference data is unavailable."],
     [/missing|too few/, "A stroke may be missing."],
     [/extra|too many|unmatched/, "There may be an extra stroke."],
     [/direction|reverse/, "A stroke was drawn in the wrong direction."],
-    [/position|placement|displac|far/, "A stroke is in the wrong place."],
+    [/position|placement|misplac|displac|far/, "A model stroke is placed differently."],
     [/short|length|overlong/, "A stroke is too short, too long, or the wrong length."],
     [/curve|shape|frechet/, "A stroke has the wrong curve or shape."],
     [/invalid|input/, "The captured strokes could not be checked."],
@@ -76,7 +80,7 @@ function readableShapeIssue(reason: string) {
   return labels.find(([pattern]) => pattern.test(normalized))?.[1] ?? reason;
 }
 
-function repairLabel(repair: ShapeAssessment["repairApplied"]) {
+function repairLabel(repair: StrokeAssessment["repairApplied"]) {
   if (!repair || repair === "none") return null;
   const value = String(repair).toLowerCase();
   if (value.includes("merge")) return "One accidental pen lift was repaired.";
@@ -84,9 +88,43 @@ function repairLabel(repair: ShapeAssessment["repairApplied"]) {
   return `Capture repair used: ${String(repair)}.`;
 }
 
+function strokePracticeTips(assessment: StrokeAssessment | undefined, wholeShapePassed: boolean) {
+  if (!assessment) return [];
+  const tips: string[] = [];
+  if (assessment.rawStrokeCount !== assessment.expectedStrokeCount) {
+    tips.push(
+      `You used ${assessment.rawStrokeCount} pen movement${assessment.rawStrokeCount === 1 ? "" : "s"}; `
+      + `the model uses ${assessment.expectedStrokeCount} strokes. This does not fail a readable character.`,
+    );
+  }
+  if (assessment.strokeOrderWarning) {
+    tips.push("Your stroke order differs from the model. This is a practice tip only.");
+  }
+  if (assessment.rawStrokeCount === assessment.expectedStrokeCount && !assessment.passed) {
+    const issue = assessment.failureReasons.map(readableStrokeIssue)[0];
+    if (issue) {
+      tips.push(`${issue} ${wholeShapePassed ? "The completed character still looks readable." : "Trace the model once to practise its standard form."}`);
+    }
+  }
+  const repair = repairLabel(assessment.repairApplied);
+  if (repair) tips.push(repair);
+  return Array.from(new Set(tips));
+}
+
+function componentPositionLabel(position: ShapeAssessment["components"][number]["position"]) {
+  if (position === "upper") return "top";
+  if (position === "lower") return "bottom";
+  if (position === "main") return "main outline";
+  return position;
+}
+
 function ShapePreview({ assessment, expected }: { assessment: ShapeAssessment; expected: string }) {
   const studentPaths = assessment.studentPaths ?? [];
-  const failedExpectedIndices = new Set(assessment.matches.filter((match) => !match.passed).map((match) => match.expectedIndex));
+  const failedExpectedIndices = new Set(
+    assessment.components
+      .filter((component) => !component.passed)
+      .flatMap((component) => component.expectedStrokeIndices),
+  );
   const referencePaths = assessment.passed
     ? []
     : failedExpectedIndices.size
@@ -94,9 +132,33 @@ function ShapePreview({ assessment, expected }: { assessment: ShapeAssessment; e
       : assessment.referencePaths;
   if (!studentPaths.length && !referencePaths.length) return null;
 
+  const problemQuadrants = new Set(
+    [
+      ...assessment.issues.map((issue) => issue.quadrant),
+      ...assessment.quadrants
+        .filter((quadrant) => quadrant.major && quadrant.expectedCoverage < 0.55)
+        .map((quadrant) => quadrant.region),
+    ].filter((value): value is NonNullable<typeof value> => Boolean(value)),
+  );
+  const quadrantRects = {
+    "top-left": { x: 0, y: 0 },
+    "top-right": { x: 512, y: 0 },
+    "bottom-left": { x: 0, y: 512 },
+    "bottom-right": { x: 512, y: 512 },
+  } as const;
+
   return (
     <figure className="shape-preview">
       <svg viewBox="0 0 1024 1024" role="img" aria-label={`Shape comparison for ${expected}`}>
+        <g className="problem-quadrants">
+          {Array.from(problemQuadrants).map((quadrant) => (
+            <rect key={quadrant} {...quadrantRects[quadrant]} width="512" height="512" />
+          ))}
+        </g>
+        <g className="preview-guides">
+          <line x1="512" y1="0" x2="512" y2="1024" />
+          <line x1="0" y1="512" x2="1024" y2="512" />
+        </g>
         <g className="reference-shape">
           {referencePaths.map((path, index) => <polyline key={`reference-${index}`} points={polylinePoints(path)} />)}
         </g>
@@ -104,7 +166,11 @@ function ShapePreview({ assessment, expected }: { assessment: ShapeAssessment; e
           {studentPaths.map((path, index) => <polyline key={`student-${index}`} points={polylinePoints(path)} />)}
         </g>
       </svg>
-      <figcaption><span className="student-key">Your strokes</span>{!assessment.passed && <span className="reference-key">Expected shape</span>}</figcaption>
+      <figcaption>
+        <span className="student-key">Your writing</span>
+        {!assessment.passed && <span className="reference-key">Expected part</span>}
+        {problemQuadrants.size > 0 && <span className="quadrant-key">Area to practise</span>}
+      </figcaption>
     </figure>
   );
 }
@@ -162,7 +228,7 @@ export function HandwritingApp() {
   const [stylusOnly, setStylusOnly] = useState(false);
   const [brushSize, setBrushSize] = useState(7);
   const [acceptanceThreshold, setAcceptanceThreshold] = useState(1);
-  const [recognitionMethod, setRecognitionMethod] = useState<RecognitionMethod>("local");
+  const [recognitionMethod, setRecognitionMethod] = useState<RecognitionMethod>("myscript");
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [undoStack, setUndoStack] = useState<Stroke[][]>([]);
   const [redoStack, setRedoStack] = useState<Stroke[][]>([]);
@@ -172,6 +238,7 @@ export function HandwritingApp() {
   const [marking, setMarking] = useState(false);
   const [message, setMessage] = useState("");
   const [result, setResult] = useState<Result | null>(null);
+  const [traceTarget, setTraceTarget] = useState<string | null>(null);
   const [dimensions, setDimensions] = useState({ width: 600, height: 300 });
   const [debugSeparators, setDebugSeparators] = useState<number[]>([]);
   const diagnosticsEnabled = process.env.NODE_ENV === "development";
@@ -179,6 +246,7 @@ export function HandwritingApp() {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const messageRef = useRef<HTMLParagraphElement>(null);
+  const traceInstructionRef = useRef<HTMLParagraphElement>(null);
   const resultCardRef = useRef<HTMLElement>(null);
   const resultHeadingRef = useRef<HTMLHeadingElement>(null);
   const strokesRef = useRef<Stroke[]>([]);
@@ -237,6 +305,13 @@ export function HandwritingApp() {
     strokesRef.current = next;
     setStrokes(next);
   }, []);
+
+  useEffect(() => {
+    if (recognitionMethod !== "myscript") return;
+    if (recognizerStates.myscript !== "error" || recognizerStates.local !== "ready") return;
+    setRecognitionMethod("local");
+    setMessage("MyScript is unavailable, so this attempt will use Local WASM.");
+  }, [recognitionMethod, recognizerStates.local, recognizerStates.myscript]);
 
   useEffect(() => {
     let active = true;
@@ -391,6 +466,7 @@ export function HandwritingApp() {
 
   function selectWord(word: string) {
     setGuideMode("boxes");
+    setTraceTarget(null);
     setTarget(word);
     resetDrawing();
   }
@@ -406,7 +482,27 @@ export function HandwritingApp() {
     if (mode === guideMode) return;
     cancelActiveInput(true);
     invalidateRecognition();
+    if (mode === "free") setTraceTarget(null);
     setGuideMode(mode);
+  }
+
+  function tryAgain() {
+    setTraceTarget(null);
+    resetDrawing();
+  }
+
+  function startTracePractice() {
+    if (!target) return;
+    setGuideMode("boxes");
+    resetDrawing();
+    setTraceTarget(target);
+    window.requestAnimationFrame(() => {
+      hostRef.current?.scrollIntoView({
+        behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "center",
+      });
+      traceInstructionRef.current?.focus({ preventScroll: true });
+    });
   }
 
   function selectAcceptanceThreshold(threshold: number) {
@@ -571,9 +667,9 @@ export function HandwritingApp() {
       if (version !== requestVersionRef.current) return;
       setRecognizerEvidence((evidence) => ({ ...evidence, [method]: predictions }));
       const grade = gradeRankedCandidates(target, predictions, acceptanceThreshold);
-      const shapeAssessments = segmentation.groups.map((group, index) => assessCharacterShape(group, characters[index], regions[index]));
-      const correct = targetAwareCorrect(grade.correct, shapeAssessments, characters.length);
-      const status: ResultStatus = !grade.correct ? "unrecognized" : correct ? "correct" : "shape";
+      const shapeAssessments = segmentation.groups.map((group, index) => assessWholeCharacterShape(group, characters[index], regions[index]));
+      const strokeAssessments = segmentation.groups.map((group, index) => assessCharacterShape(group, characters[index], regions[index]));
+      const status: ResultStatus = markingStatus(grade.correct, shapeAssessments, characters.length);
       const detectedCharacters = grade.detectedCharacters;
       const detected = detectedCharacters.map((character) => character || "No match").join(" · ");
       setResult({
@@ -584,6 +680,7 @@ export function HandwritingApp() {
         threshold: acceptanceThreshold,
         recognitionPassed: grade.correct,
         shapeAssessments,
+        strokeAssessments,
         regions,
         separators: [...segmentation.separators],
         markDimensions: { width: currentWidth, height: currentHeight },
@@ -620,6 +717,7 @@ export function HandwritingApp() {
       } : null,
       candidates: result?.predictions ?? recognizerEvidence[recognitionMethod],
       shapeAssessments: result?.shapeAssessments ?? null,
+      strokeAssessments: result?.strokeAssessments ?? null,
       result: result ? {
         detectedCharacters: result.detectedCharacters,
         expectedRanks: result.expectedRanks,
@@ -673,7 +771,7 @@ export function HandwritingApp() {
   return (
     <main className="practice-shell">
       <header className="practice-header">
-        <button className="back-button" onClick={() => { setTarget(null); resetDrawing(); }}>← Word list</button>
+        <button className="back-button" onClick={() => { setTraceTarget(null); setTarget(null); resetDrawing(); }}>← Word list</button>
         <div><p className="eyebrow">Write this word</p><h1>{target}</h1></div>
         <span className={`ready-pill ${recognizerState}`} title={recognizerError || undefined}>{recognitionLabel} · {recognizerState === "ready" ? "Ready" : recognizerState}</span>
       </header>
@@ -722,12 +820,20 @@ export function HandwritingApp() {
         </div>
 
         <div className="board-scroller">
-          <div ref={hostRef} className={`canvas-host mode-${guideMode}`} style={{ "--character-count": characterCount } as React.CSSProperties}>
+          <div
+            ref={hostRef}
+            className={`canvas-host mode-${guideMode}`}
+            data-character-count={characterCount}
+            style={guideBoardStyle(characterCount)}
+          >
             <ChineseGuide count={characterCount} mode={guideMode}/>
+            {guideMode === "boxes" && traceTarget && <TraceModel characters={traceTarget}/>}
             <canvas
               ref={canvasRef}
               draggable={false}
-              aria-label={`Write ${target} here. Use one region per Chinese character.`}
+              aria-label={traceTarget
+                ? `Trace the pale model for ${target}. Use one square per Chinese character.`
+                : `Write ${target} here. Use one region per Chinese character.`}
               onPointerDown={pointerDown}
               onPointerMove={pointerMove}
               onPointerUp={finishPointer}
@@ -739,8 +845,14 @@ export function HandwritingApp() {
         </div>
 
         <div className="action-row">
-          <p>{guideMode === "free" ? "Leave a clear vertical space between characters." : "Write one character inside each square."}</p>
-          <button className="mark-button" onClick={mark} disabled={marking || recognizerState !== "ready" || !strokes.length} aria-controls="mark-result"><Icon name="check"/>{marking ? "Marking…" : "Mark answer"}</button>
+          <p ref={traceInstructionRef} tabIndex={traceTarget ? -1 : undefined} aria-live="polite">
+            {guideMode === "free" ? "Leave a clear vertical space between characters." : "Write one character inside each square."}
+            {traceTarget && <strong className="trace-active-copy"> Trace the pale model, then check your practice.</strong>}
+          </p>
+          <div className="action-buttons">
+            {traceTarget && <button className="hide-trace-button" type="button" onClick={() => setTraceTarget(null)}>Hide model</button>}
+            <button className="mark-button" onClick={mark} disabled={marking || recognizerState !== "ready" || !strokes.length} aria-controls="mark-result"><Icon name="check"/>{marking ? "Marking…" : "Mark answer"}</button>
+          </div>
         </div>
       </section>
 
@@ -748,13 +860,14 @@ export function HandwritingApp() {
       {result && (
         <section ref={resultCardRef} id="mark-result" className={`result-card ${result.status}`} aria-live="polite">
           <div className="result-heading">
-            <span>{result.status === "correct" ? "✓" : result.status === "shape" ? "!" : "×"}</span>
+            <span>{result.status === "correct" ? "✓" : result.status === "shape" ? "!" : result.status === "incomplete" ? "…" : "×"}</span>
             <div>
               <p className="eyebrow">Your result</p>
               <h2 ref={resultHeadingRef} tabIndex={-1}>
                 {result.status === "correct" && "Correct!"}
-                {result.status === "shape" && "Recognized, but the writing shape needs work"}
+                {result.status === "shape" && "I can read it, but part of the shape needs practice"}
                 {result.status === "unrecognized" && "Character not recognized"}
+                {result.status === "incomplete" && "Finish every character first"}
               </h2>
             </div>
           </div>
@@ -765,30 +878,44 @@ export function HandwritingApp() {
               const rank = result.expectedRanks[index];
               const recognitionMatched = rank !== null && rank <= result.threshold;
               const assessment = result.shapeAssessments[index];
+              const strokeAssessment = result.strokeAssessments[index];
               const passed = recognitionMatched && assessment?.passed;
-              const issues = Array.from(new Set((assessment?.failureReasons ?? []).map(readableShapeIssue)));
-              if (assessment && !assessment.passed && issues.length === 0) issues.push("The character’s structure did not match closely enough.");
-              const repair = assessment ? repairLabel(assessment.repairApplied) : null;
+              const issues = Array.from(new Set((assessment?.issues ?? []).map((issue) => issue.message)));
+              if (assessment && !assessment.passed && !assessment.blank && issues.length === 0) issues.push("A major part of the character does not match closely enough yet.");
+              const practiceTips = strokePracticeTips(strokeAssessment, assessment?.passed ?? false);
               return (
                 <article className={passed ? "match" : "mismatch"} key={index}>
                   <div className="character-facts">
                     <span>Expected</span><strong>{expected}</strong>
                     <span>Top guess</span><strong>{result.detectedCharacters[index] || "No match"}</strong>
                     <span>Expected rank</span><strong className="rank-value">{rank ?? "Not found"}</strong>
-                    <span>Stroke count</span>
+                    <span>Pen movements</span>
                     <strong className="count-value">
-                      {assessment ? `${assessment.rawStrokeCount} observed / ${assessment.expectedStrokeCount} expected` : "Not checked"}
+                      {assessment ? `${assessment.rawStrokeCount} used · model has ${assessment.expectedStrokeCount} strokes` : "Not checked"}
                     </strong>
                   </div>
                   <p className={`shape-status ${assessment?.passed ? "passed" : "failed"}`}>
-                    {assessment?.passed ? "Shape passed" : "Shape needs work"}
+                    {assessment?.blank ? "Not written" : assessment?.passed ? "Overall shape matches" : "Shape needs practice"}
                   </p>
-                  {assessment && assessment.assessedStrokeCount !== assessment.rawStrokeCount && (
-                    <p className="shape-note">Checked as {assessment.assessedStrokeCount} strokes after capture repair.</p>
-                  )}
                   {issues.length > 0 && <ul className="shape-issues">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}
-                  {assessment?.strokeOrderWarning && <p className="order-note">The stroke order was different. This is a tip only and did not cause the answer to fail.</p>}
-                  {repair && <p className="repair-note">{repair}</p>}
+                  {assessment && assessment.components.length > 0 && (
+                    <div className="component-breakdown" aria-label={`Parts of ${expected}`}>
+                      <p>Character parts</p>
+                      <div>
+                        {assessment.components.map((component) => (
+                          <span className={component.passed ? "passed" : "failed"} key={component.id}>
+                            <b>{component.label}</b> {componentPositionLabel(component.position)} · {component.passed ? "in place" : "practise this part"}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {practiceTips.length > 0 && (
+                    <div className="stroke-tips">
+                      <p>Stroke practice tips</p>
+                      <ul>{practiceTips.map((tip) => <li key={tip}>{tip}</li>)}</ul>
+                    </div>
+                  )}
                   {assessment && <ShapePreview assessment={assessment} expected={expected} />}
                 </article>
               );
@@ -798,10 +925,16 @@ export function HandwritingApp() {
             <p className="rank-note">Recognition passed because every expected character appeared within the top {result.threshold} candidates. Shape checking was graded separately.</p>
           )}
           {result.detectedCharacters.some((character) => !character) && (
-            <p className="spacing-warning">I couldn’t find a clear match for one or more characters. Your writing is still here—write a little larger with separate pen strokes, then mark it again.</p>
+            <p className="spacing-warning">I couldn’t find a clear match for one or more characters. Your writing is still here—use the shape guidance above, then try again.</p>
           )}
           {result.weakSplit && guideMode === "free" && <p className="spacing-warning">Tip: leave a clearer space between each character next time.</p>}
-          <div className="result-actions"><button onClick={resetDrawing}>Try again</button><button onClick={() => { setTarget(null); resetDrawing(); }}>Choose another word</button></div>
+          <div className="result-actions">
+            <button onClick={tryAgain}>Try again</button>
+            {(result.status !== "correct" || result.strokeAssessments.some((assessment) => !assessment.passed)) && (
+              <button className="trace-practice-button" onClick={startTracePractice}>Practise over the grid model</button>
+            )}
+            <button onClick={() => { setTraceTarget(null); setTarget(null); resetDrawing(); }}>Choose another word</button>
+          </div>
         </section>
       )}
 
@@ -829,11 +962,12 @@ export function HandwritingApp() {
               status: result.status,
               regions: result.regions,
               shapeAssessments: result.shapeAssessments,
+              strokeAssessments: result.strokeAssessments,
             } : null,
           }, null, 2)}</pre>
         </details>
       )}
-      <footer>Local WASM uses hanzi_lookup (LGPL). Shape validation adapts Hanzi Writer’s MIT-licensed matcher. Character data is Make Me a Hanzi-derived (Arphic Public License). MyScript sends stroke data to the configured MyScript service when selected.</footer>
+      <footer>Local WASM uses hanzi_lookup (LGPL). Whole-character geometry and optional stroke tips use Hanzi Writer-inspired methods. Character data is Make Me a Hanzi-derived (Arphic Public License). MyScript sends stroke data to the configured MyScript service when selected.</footer>
     </main>
   );
 }
