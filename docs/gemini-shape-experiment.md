@@ -60,7 +60,7 @@ The active comparison now uses `gemini-3-flash-preview` with the same structured
 | Modest whole-character distortion | pass | pass | 2.4 s |
 | Substantial unrelated extra diagonal | fail | fail | 3.4 s |
 
-Gemini 3 Flash agreement was 5/5 after the rubric explicitly required every visible enclosure boundary. It preserved the Pro model's result on this small set at roughly one sixth of the latency.
+Gemini 3 Flash agreement was 6/6 after the rubric explicitly required every official visible path. The set now includes a malformed `老` whose lower `匕` was replaced by a broad U-shaped curve; it failed and returned concise Traditional Chinese feedback. The server also fails closed when any expected path check is missing or malformed.
 
 ## Current recommendation
 

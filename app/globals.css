@@ -57,9 +57,13 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 4px s
 
 .practice-shell { padding: 22px clamp(14px, 3vw, 42px) 34px; }
 .practice-header { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; width: min(1320px, 100%); margin: 0 auto 17px; }
-.practice-header > div { text-align: center; }
+.target-heading { text-align: center; }
 .practice-header h1 { margin: 0; font: 700 clamp(2rem, 5vw, 3.6rem)/1 "Kaiti SC", STKaiti, serif; }
 .back-button { justify-self: start; padding: 11px 16px; border: 2px solid #cfe3da; border-radius: 14px; background: white; font-weight: 850; cursor: pointer; }
+.header-controls { min-width: 0; display: flex; justify-self: end; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.language-toggle { display: flex; padding: 3px; border: 2px solid #cfe3da; border-radius: 12px; background: white; }
+.language-toggle button { min-height: 38px; padding: 6px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: .75rem; font-weight: 850; cursor: pointer; }
+.language-toggle button.active { background: var(--ink); color: white; }
 .ready-pill { justify-self: end; padding: 8px 12px; border-radius: 999px; background: #e4f7ef; color: #176c56; font-size: .78rem; font-weight: 900; text-transform: capitalize; }
 .ready-pill.loading { background: #fff3ce; color: #76591c; }
 .ready-pill.error { background: #ffe5df; color: #9c382d; }
@@ -206,8 +210,9 @@ footer { width: min(1320px, 100%); margin: 25px auto 0; color: #72857d; font-siz
   .word-card { min-height: 135px; }
   .word-card strong { margin: 8px 0; }
   .practice-header { grid-template-columns: 1fr auto; }
-  .practice-header > div { grid-row: 2; grid-column: 1 / -1; margin-top: 10px; }
-  .ready-pill { grid-column: 2; }
+  .target-heading { grid-row: 2; grid-column: 1 / -1; margin-top: 10px; }
+  .header-controls { grid-column: 2; }
+  .header-controls .ready-pill { display: none; }
   .action-row { align-items: stretch; flex-direction: column; }
   .action-buttons { justify-content: stretch; }
   .action-buttons > button { flex: 1; justify-content: center; }

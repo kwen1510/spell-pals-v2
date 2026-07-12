@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { getCharacterTemplate } from "./character-template";
 import {
   buildGeminiShapePrompt,
+  enforceRequiredPathChecks,
+  type GeminiShapeAssessment,
   normalizeShapePaths,
   renderShapePng,
 } from "./gemini-shape-experiment";
@@ -28,5 +30,34 @@ describe("Gemini shape experiment grounding", () => {
     expect(prompt).toContain("positiveFeedback");
     expect(prompt).toContain('"label": "口"');
     expect(prompt).toContain('"label": "斤"');
+  });
+
+  it("fails closed when Gemini omits or rejects any required visible path", () => {
+    const template = getCharacterTemplate("老")!;
+    const assessment: GeminiShapeAssessment = {
+      verdict: "correct_shape",
+      recognizableAsExpected: true,
+      allRequiredVisiblePiecesPresent: true,
+      hasSubstantialExtraMark: false,
+      components: [],
+      pathChecks: template.modelStrokes.map((stroke) => ({
+        strokeIndex: stroke.index,
+        componentId: stroke.componentId ?? "root",
+        status: "present",
+        issue: "",
+      })),
+      missingPieces: [],
+      extraPieces: [],
+      positiveFeedback: "The top is clear.",
+      improvementFeedback: "",
+      summary: "Looks complete.",
+    };
+    expect(enforceRequiredPathChecks(template, assessment).verdict).toBe("correct_shape");
+    assessment.pathChecks[assessment.pathChecks.length - 1].status = "malformed";
+    expect(enforceRequiredPathChecks(template, assessment).verdict).toBe("incorrect_shape");
+    assessment.pathChecks.pop();
+    expect(enforceRequiredPathChecks(template, assessment).verdict).toBe("incorrect_shape");
+    assessment.pathChecks.push(assessment.pathChecks[0], assessment.pathChecks[0]);
+    expect(enforceRequiredPathChecks(template, assessment).verdict).toBe("incorrect_shape");
   });
 });

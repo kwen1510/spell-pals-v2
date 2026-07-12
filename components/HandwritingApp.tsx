@@ -17,6 +17,7 @@ import type { Stroke, StrokePoint } from "@/lib/handwriting/types";
 const WORDS = ["听写", "老师", "飞机场"] as const;
 type Tool = "pen" | "eraser";
 type GuideMode = "free" | "boxes";
+type FeedbackLanguage = "en-GB" | "zh-Hant";
 type ResultStatus = MarkingStatus;
 type GeminiShapeAssessment = {
   verdict: "correct_shape" | "incorrect_shape" | "uncertain";
@@ -24,6 +25,7 @@ type GeminiShapeAssessment = {
   allRequiredVisiblePiecesPresent: boolean;
   hasSubstantialExtraMark: boolean;
   components: Array<{ id: string; label: string; status: "present" | "incomplete" | "missing"; issues: string[] }>;
+  pathChecks: Array<{ strokeIndex: number; componentId: string; status: "present" | "malformed" | "missing"; issue: string }>;
   missingPieces: Array<{ componentId: string; description: string }>;
   extraPieces: Array<{ description: string }>;
   positiveFeedback: string;
@@ -36,12 +38,12 @@ interface Result {
   assessments: GeminiShapeAssessment[];
 }
 
-async function requestGeminiAssessment(expected: string, strokes: Stroke[]): Promise<GeminiShapeAssessment | null> {
+async function requestGeminiAssessment(expected: string, strokes: Stroke[], feedbackLanguage: FeedbackLanguage): Promise<GeminiShapeAssessment | null> {
   if (!strokes.length) return null;
   const response = await fetch("/api/gemini-shape", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ expected, strokes }),
+    body: JSON.stringify({ expected, strokes, feedbackLanguage }),
   });
   const payload = await response.json().catch(() => ({})) as {
     assessment?: GeminiShapeAssessment;
@@ -72,6 +74,7 @@ export function HandwritingApp() {
   const [guideMode, setGuideMode] = useState<GuideMode>("boxes");
   const [stylusOnly, setStylusOnly] = useState(false);
   const [brushSize, setBrushSize] = useState(7);
+  const [feedbackLanguage, setFeedbackLanguage] = useState<FeedbackLanguage>("en-GB");
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [undoStack, setUndoStack] = useState<Stroke[][]>([]);
   const [redoStack, setRedoStack] = useState<Stroke[][]>([]);
@@ -438,7 +441,7 @@ export function HandwritingApp() {
       : segmentByWhitespace(markStrokes, characters.length, currentWidth);
     try {
       const geminiAssessments = await Promise.all(
-        segmentation.groups.map((group, index) => requestGeminiAssessment(characters[index], group)),
+        segmentation.groups.map((group, index) => requestGeminiAssessment(characters[index], group, feedbackLanguage)),
       );
       if (version !== requestVersionRef.current) return;
       const incomplete = segmentation.groups.some((group) => group.length === 0);
@@ -485,8 +488,14 @@ export function HandwritingApp() {
     <main className="practice-shell">
       <header className="practice-header">
         <button className="back-button" onClick={() => { setTraceTarget(null); setTarget(null); resetDrawing(); }}>← Word list</button>
-        <div><p className="eyebrow">Write this word</p><h1>{target}</h1></div>
-        <span className="ready-pill">Gemini 3 Flash · Ready</span>
+        <div className="target-heading"><p className="eyebrow">Write this word</p><h1>{target}</h1></div>
+        <div className="header-controls">
+          <div className="language-toggle" role="group" aria-label="Feedback language">
+            <button type="button" className={feedbackLanguage === "en-GB" ? "active" : ""} onClick={() => setFeedbackLanguage("en-GB")} aria-pressed={feedbackLanguage === "en-GB"}>English</button>
+            <button type="button" className={feedbackLanguage === "zh-Hant" ? "active" : ""} onClick={() => setFeedbackLanguage("zh-Hant")} aria-pressed={feedbackLanguage === "zh-Hant"}>繁體中文</button>
+          </div>
+          <span className="ready-pill">Gemini 3 Flash · Ready</span>
+        </div>
       </header>
 
       <section className="keyboard-card">

@@ -5,6 +5,7 @@ import type { CharacterTemplate } from "./character-template";
 import { extractVisualPrimitives, type PrimitivePoint } from "./primitive-analysis";
 
 export const GEMINI_SHAPE_MODEL = "gemini-3-flash-preview";
+export type GeminiFeedbackLanguage = "en-GB" | "zh-Hant";
 
 export const geminiShapeAssessmentSchema = z.object({
   verdict: z.enum(["correct_shape", "incorrect_shape", "uncertain"]),
@@ -16,6 +17,12 @@ export const geminiShapeAssessmentSchema = z.object({
     label: z.string(),
     status: z.enum(["present", "incomplete", "missing"]),
     issues: z.array(z.string()),
+  })),
+  pathChecks: z.array(z.object({
+    strokeIndex: z.number().int().nonnegative(),
+    componentId: z.string(),
+    status: z.enum(["present", "malformed", "missing"]),
+    issue: z.string(),
   })),
   missingPieces: z.array(z.object({
     componentId: z.string(),
@@ -31,6 +38,24 @@ export const geminiShapeAssessmentSchema = z.object({
 
 export type GeminiShapeAssessment = z.infer<typeof geminiShapeAssessmentSchema>;
 
+export function enforceRequiredPathChecks(
+  template: CharacterTemplate,
+  assessment: GeminiShapeAssessment,
+): GeminiShapeAssessment {
+  const expectedIndexes = new Set(template.modelStrokes.map((stroke) => stroke.index));
+  const checkedIndexes = new Set(assessment.pathChecks.map((check) => check.strokeIndex));
+  const everyRequiredPathPresent = assessment.pathChecks.length === expectedIndexes.size
+    && checkedIndexes.size === expectedIndexes.size
+    && [...expectedIndexes].every((index) => checkedIndexes.has(index))
+    && assessment.pathChecks.every((check) => expectedIndexes.has(check.strokeIndex) && check.status === "present");
+  if (everyRequiredPathPresent && !assessment.hasSubstantialExtraMark) return assessment;
+  return {
+    ...assessment,
+    verdict: "incorrect_shape",
+    allRequiredVisiblePiecesPresent: false,
+  };
+}
+
 const RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -40,6 +65,7 @@ const RESPONSE_SCHEMA = {
     "allRequiredVisiblePiecesPresent",
     "hasSubstantialExtraMark",
     "components",
+    "pathChecks",
     "missingPieces",
     "extraPieces",
     "positiveFeedback",
@@ -62,6 +88,20 @@ const RESPONSE_SCHEMA = {
           label: { type: "string" },
           status: { type: "string", enum: ["present", "incomplete", "missing"] },
           issues: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+    pathChecks: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["strokeIndex", "componentId", "status", "issue"],
+        properties: {
+          strokeIndex: { type: "number" },
+          componentId: { type: "string" },
+          status: { type: "string", enum: ["present", "malformed", "missing"] },
+          issue: { type: "string" },
         },
       },
     },
@@ -171,6 +211,7 @@ function componentEvidence(template: CharacterTemplate) {
 export function buildGeminiShapePrompt(
   template: CharacterTemplate,
   studentPaths: readonly (readonly PrimitivePoint[])[],
+  feedbackLanguage: GeminiFeedbackLanguage = "en-GB",
 ): string {
   const normalizedStudent = normalizeShapePaths(studentPaths);
   const studentPrimitives = extractVisualPrimitives(normalizedStudent.map((points, index) => ({
@@ -197,8 +238,12 @@ Important grading policy:
 - Inspect every expected visible path before choosing the verdict. A component is present only when all of its required visible lines or curves exist.
 - Closed components such as 口 must visibly have all four boundaries. An open three-sided shape is incomplete even when it is obviously intended as 口.
 - Never mentally complete, infer, or repair absent ink. Judge only marks visible in the student image.
+- Treat each official median path as a required VISIBLE SHAPE, not necessarily a separate pen movement. Return exactly one pathChecks entry for every strokeIndex in the grounding data.
+- Mark a path present only if a corresponding visible line or curve has the same rough direction, relative length, and structural role. Mark a substituted, severely shortened, or wrongly curved path malformed.
+- correct_shape is allowed only when every required path is present, every required component is complete, and no substantial extra mark exists.
 - Do not compare calligraphic beauty. Students are not calligraphers.
 - If the images or evidence do not support a reliable decision, return uncertain rather than guessing.
+- Write positiveFeedback and improvementFeedback in ${feedbackLanguage === "zh-Hant" ? "Traditional Chinese (繁體中文)" : "British English"}.
 - positiveFeedback must be one short, student-friendly sentence about a visible part that is already good.
 - improvementFeedback must be one short, student-friendly sentence naming only the most useful next improvement. Return an empty string when no improvement is needed.
 
@@ -215,6 +260,7 @@ export async function assessShapeWithGemini(args: {
   apiKey: string;
   template: CharacterTemplate;
   studentPaths: readonly (readonly PrimitivePoint[])[];
+  feedbackLanguage?: GeminiFeedbackLanguage;
   signal?: AbortSignal;
 }): Promise<GeminiShapeAssessment> {
   const client = new GoogleGenAI({ apiKey: args.apiKey });
@@ -223,7 +269,7 @@ export async function assessShapeWithGemini(args: {
     store: false,
     system_instruction: "Be conservative and evidence-based. The expected answer is context, not proof that the student wrote it correctly.",
     input: [
-      { type: "text", text: buildGeminiShapePrompt(args.template, args.studentPaths) },
+      { type: "text", text: buildGeminiShapePrompt(args.template, args.studentPaths, args.feedbackLanguage) },
       { type: "image", data: renderShapePng(args.studentPaths).toString("base64"), mime_type: "image/png" },
       { type: "image", data: renderShapePng(args.template.modelStrokes.map((stroke) => stroke.median)).toString("base64"), mime_type: "image/png" },
     ],
@@ -231,5 +277,5 @@ export async function assessShapeWithGemini(args: {
     generation_config: { temperature: 0, thinking_level: "minimal" },
   }, { signal: args.signal });
   if (!response.output_text) throw new Error("Gemini returned no structured assessment.");
-  return geminiShapeAssessmentSchema.parse(JSON.parse(response.output_text));
+  return enforceRequiredPathChecks(args.template, geminiShapeAssessmentSchema.parse(JSON.parse(response.output_text)));
 }

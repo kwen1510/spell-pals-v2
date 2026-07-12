@@ -9,6 +9,8 @@ if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
 
 const template = getCharacterTemplate("听");
 if (!template) throw new Error("Missing 听 template.");
+const laoTemplate = getCharacterTemplate("老");
+if (!laoTemplate) throw new Error("Missing 老 template.");
 
 const canonical = template.modelStrokes.map((stroke) => stroke.median);
 const mouth = template.components.find((component) => component.label === "口");
@@ -28,6 +30,8 @@ const cases: Array<{
   name: string;
   paths: PrimitivePoint[][];
   expectedGemini: "correct_shape" | "incorrect_shape";
+  template?: NonNullable<ReturnType<typeof getCharacterTemplate>>;
+  feedbackLanguage?: "en-GB" | "zh-Hant";
 }> = [
   { name: "official complete median", paths: canonical, expectedGemini: "correct_shape" },
   {
@@ -53,16 +57,31 @@ const cases: Array<{
     paths: [...canonical, [{ x: 0.04, y: 0.94 }, { x: 0.96, y: 0.08 }]],
     expectedGemini: "incorrect_shape",
   },
+  {
+    name: "malformed 老 with broad U replacing lower 匕",
+    template: laoTemplate,
+    feedbackLanguage: "zh-Hant",
+    paths: [
+      [{ x: 0.48, y: 0.1 }, { x: 0.47, y: 0.38 }],
+      [{ x: 0.28, y: 0.27 }, { x: 0.62, y: 0.22 }],
+      [{ x: 0.23, y: 0.43 }, { x: 0.67, y: 0.36 }],
+      [{ x: 0.67, y: 0.16 }, { x: 0.18, y: 0.73 }],
+      [{ x: 0.5, y: 0.6 }, { x: 0.48, y: 0.78 }, { x: 0.57, y: 0.88 }, { x: 0.78, y: 0.88 }, { x: 0.84, y: 0.8 }, { x: 0.78, y: 0.72 }],
+    ],
+    expectedGemini: "incorrect_shape",
+  },
 ];
 
 const results = [];
 for (const testCase of cases) {
-  const deterministic = assessRoughShape(template, testCase.paths);
+  const activeTemplate = testCase.template ?? template;
+  const deterministic = assessRoughShape(activeTemplate, testCase.paths);
   const startedAt = Date.now();
   const gemini = await assessShapeWithGemini({
     apiKey,
-    template,
+    template: activeTemplate,
     studentPaths: testCase.paths,
+    feedbackLanguage: testCase.feedbackLanguage,
     signal: AbortSignal.timeout(90_000),
   });
   results.push({
@@ -74,6 +93,8 @@ for (const testCase of cases) {
     requiredPiecesPresent: gemini.allRequiredVisiblePiecesPresent,
     substantialExtra: gemini.hasSubstantialExtraMark,
     summary: gemini.summary,
+    positiveFeedback: gemini.positiveFeedback,
+    improvementFeedback: gemini.improvementFeedback,
     elapsedMs: Date.now() - startedAt,
   });
 }

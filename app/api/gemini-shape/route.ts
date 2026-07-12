@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCharacterTemplate } from "../../../lib/handwriting/character-template";
-import { assessShapeWithGemini, GEMINI_SHAPE_MODEL } from "../../../lib/handwriting/gemini-shape-experiment";
+import { assessShapeWithGemini, GEMINI_SHAPE_MODEL, type GeminiFeedbackLanguage } from "../../../lib/handwriting/gemini-shape-experiment";
 import type { Stroke } from "../../../lib/handwriting/types";
 import { isRequestAuthenticated } from "../../../lib/auth/session";
 
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
   if (!sameOrigin(request)) return json({ message: "This assessment request was not accepted." }, 403);
   if (!withinRateLimit(request)) return json({ message: "Too many Gemini experiment requests. Please wait a moment." }, 429);
 
-  let input: { expected?: unknown; strokes?: unknown };
+  let input: { expected?: unknown; strokes?: unknown; feedbackLanguage?: unknown };
   try {
     const raw = await request.text();
     if (raw.length > MAX_BODY_CHARACTERS) return json({ message: "The assessment request was too large." }, 413);
@@ -101,6 +101,7 @@ export async function POST(request: NextRequest) {
   if (!template) return json({ message: "This experiment does not yet have grounded component data for that character." }, 422);
   const strokes = validatedStrokes(input.strokes);
   if (!strokes) return json({ message: "The request contained invalid or excessive stroke data." }, 400);
+  const feedbackLanguage: GeminiFeedbackLanguage = input.feedbackLanguage === "zh-Hant" ? "zh-Hant" : "en-GB";
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45_000);
@@ -109,6 +110,7 @@ export async function POST(request: NextRequest) {
       apiKey: key,
       template,
       studentPaths: strokes.map((stroke) => stroke.points.map((point) => ({ x: point.x, y: point.y }))),
+      feedbackLanguage,
       signal: controller.signal,
     });
     return json({ assessment, model: GEMINI_SHAPE_MODEL, experimental: true });
