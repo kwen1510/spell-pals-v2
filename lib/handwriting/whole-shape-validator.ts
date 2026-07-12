@@ -7,6 +7,7 @@ import type { Stroke } from "./types";
 import { normalizeVisibleShape } from "./visible-shape-normalization";
 import { STRUCTURAL_GRADING_CONFIG } from "./structural-grading-config";
 import { getCharacterTemplate } from "./character-template";
+import { assessRoughShape, type RoughShapeAssessment } from "./rough-shape-matcher";
 
 /**
  * A light-weight, pen-lift-independent character check.
@@ -184,6 +185,8 @@ export interface WholeShapeAssessment {
   passed: boolean;
   decision: WholeShapeDecision;
   feedbackCodes: WholeShapeFeedbackCode[];
+  /** Pen-lift-independent visible line/curve matching used for correctness. */
+  roughShape: RoughShapeAssessment | null;
   blank: boolean;
   rawStrokeCount: number;
   expectedStrokeCount: number;
@@ -908,6 +911,7 @@ function baseAssessment(
       : issue.code === "missing-reference"
         ? "MISSING_REFERENCE"
         : "INVALID_CAPTURE"],
+    roughShape: null,
     blank,
     rawStrokeCount,
     expectedStrokeCount,
@@ -982,6 +986,13 @@ export function assessWholeCharacterShape(
   const expectedRaster = rasterize(structuralReferencePaths);
   const rawStudentRaster = rasterize(studentPaths);
   const match = bestMatch(structuralStudentPaths, structuralReferencePaths, expectedRaster.mask);
+  const roughShape = assessRoughShape(
+    template,
+    structuralStudentPaths.map((path) => path.map((point) => {
+      const aligned = transformPoint(point, match.transform);
+      return { x: aligned.x / 1024, y: aligned.y / 1024 };
+    })),
+  );
   // Target and competitors are compared in the same independently normalized
   // frame, without the target's residual alignment. This avoids target-biased
   // fitting and an additional 81-transform search per competitor on iPad.
@@ -1013,16 +1024,23 @@ export function assessWholeCharacterShape(
   const modelStrokeCompletenessPassed = modelStrokeCoverages.every((coverage, index) => (
     coverage >= modelStrokeRequiredCoverages[index]
   ));
+  // The centreline/raster check is deliberately independent from primitive
+  // extraction. It corroborates attempts whose visible shape is complete but
+  // whose corners were sampled unusually (fast Pencil input, a tiny capture
+  // gap, or a harmless extra pen lift). It cannot rescue genuinely missing or
+  // extra ink because both expected coverage and student precision must stay
+  // high in both ordinary and direction-aware comparisons.
+  const legacyStrongComplete = modelStrokeCompletenessPassed
+    && match.expectedCoverage >= 0.92
+    && match.studentPrecision >= 0.86
+    && directionalExpectedCoverage >= 0.82
+    && directionalStudentPrecision >= 0.82;
   // The ordinary coverage thresholds are useful coaching signals. Correctness
   // only fails when a complete visible path is clearly absent; this leaves
   // room for non-calligraphic proportions and alternate joins.
-  const clearlyMissingModelPath = modelStrokeCoverages.some((coverage, index) => {
-    if (coverage >= modelStrokeRequiredCoverages[index]) return false;
-    const evidence = modelPathSupport[index];
-    return evidence.longestGap >= 0.24
-      || evidence.supportRatio <= 0.72
-      || evidence.endpointCoverage < 0.5;
-  });
+  const roughMissingRequiredShape = roughShape.missingCriticalPieceIds.length > 0
+    || roughShape.components.some((component) => !component.passed);
+  const clearlyMissingModelPath = roughMissingRequiredShape && !legacyStrongComplete;
   const minimumModelStrokeCoverage = modelStrokeCoverages.length ? Math.min(...modelStrokeCoverages) : 0;
   const distanceToExpected = distanceField(expectedRaster.mask);
   const expectedGeometry = maskGeometry(rawExpectedRaster.mask);
@@ -1079,6 +1097,7 @@ export function assessWholeCharacterShape(
   const maximumDistance = WHOLE_SHAPE_MATCH_DISTANCE_RATIO * WHOLE_SHAPE_MASK_SIZE;
   const components: WholeShapeComponentAssessment[] = componentSources.map((source, componentIndex) => {
     const { definition, componentRaster } = source;
+    const roughComponent = roughShape.components.find((component) => component.id === definition.id);
     const studentComponentMask = componentStudentMasks[componentIndex];
     const supportingStudentInk = studentComponentMask.reduce((sum, value) => sum + value, 0);
     let matchedSupportingInk = 0;
@@ -1127,10 +1146,12 @@ export function assessWholeCharacterShape(
       centroidDeltaY,
       widthRatio,
       heightRatio,
-      passed: expectedCoverage >= WHOLE_SHAPE_MIN_COMPONENT_COVERAGE
-        && studentPrecision >= WHOLE_SHAPE_MIN_COMPONENT_PRECISION
-        && placementPassed
-        && relativeSizePassed,
+      passed: roughComponent
+        ? roughComponent.passed || legacyStrongComplete
+        : expectedCoverage >= WHOLE_SHAPE_MIN_COMPONENT_COVERAGE
+          && studentPrecision >= WHOLE_SHAPE_MIN_COMPONENT_PRECISION
+          && placementPassed
+          && relativeSizePassed,
     };
   });
   const unassignedInkShare = studentInkTotal ? unassignedStudentInk / studentInkTotal : 0;
@@ -1139,107 +1160,50 @@ export function assessWholeCharacterShape(
     match.transform,
     structuralReferencePaths,
   );
-  const majorExtraLine = unmatchedInk.unmatchedInkShare
-      >= STRUCTURAL_GRADING_CONFIG.hard.majorUnmatchedLengthRatio
-    && unmatchedInk.longestUnmatchedRunShare
-      >= STRUCTURAL_GRADING_CONFIG.hard.majorUnmatchedRunRatio;
-  const issues = [
-    ...placementIssues(expectedGeometry, studentGeometry),
-    ...missingCellIssues(cells),
-  ];
-
-  let hasSevereComponentFailure = false;
-  for (const component of components.filter((component) => !component.passed)) {
-    const severeComponentFailure = !component.hasStudentSupport
-      || component.expectedCoverage < WHOLE_SHAPE_HARD_COMPONENT_COVERAGE
-      || component.studentPrecision < WHOLE_SHAPE_HARD_COMPONENT_PRECISION
-      || Math.abs(component.centroidDeltaX) > WHOLE_SHAPE_HARD_COMPONENT_CENTROID_DELTA
-      || Math.abs(component.centroidDeltaY) > WHOLE_SHAPE_HARD_COMPONENT_CENTROID_DELTA
-      || component.widthRatio < WHOLE_SHAPE_HARD_COMPONENT_MIN_SIZE_RATIO
-      || component.widthRatio > WHOLE_SHAPE_HARD_COMPONENT_MAX_SIZE_RATIO
-      || component.heightRatio < WHOLE_SHAPE_HARD_COMPONENT_MIN_SIZE_RATIO
-      || component.heightRatio > WHOLE_SHAPE_HARD_COMPONENT_MAX_SIZE_RATIO;
-    hasSevereComponentFailure ||= severeComponentFailure;
-    const direction = component.hasStudentSupport && Math.abs(component.centroidDeltaY) >= Math.abs(component.centroidDeltaX)
-      ? component.centroidDeltaY > WHOLE_SHAPE_MAX_COMPONENT_CENTROID_DELTA
-        ? "too low"
-        : component.centroidDeltaY < -WHOLE_SHAPE_MAX_COMPONENT_CENTROID_DELTA
-          ? "too high"
-          : null
-      : component.centroidDeltaX > WHOLE_SHAPE_MAX_COMPONENT_CENTROID_DELTA
-        ? "too far right"
-        : component.centroidDeltaX < -WHOLE_SHAPE_MAX_COMPONENT_CENTROID_DELTA
-          ? "too far left"
-          : null;
-    const sizeProblem = component.hasStudentSupport
-      ? component.widthRatio > WHOLE_SHAPE_MAX_COMPONENT_SIZE_RATIO
-        ? "too wide"
-        : component.widthRatio < WHOLE_SHAPE_MIN_COMPONENT_SIZE_RATIO
-          ? "too narrow"
-          : component.heightRatio > WHOLE_SHAPE_MAX_COMPONENT_SIZE_RATIO
-            ? "too tall"
-            : component.heightRatio < WHOLE_SHAPE_MIN_COMPONENT_SIZE_RATIO
-              ? "too short"
-              : null
-      : null;
+  const majorExtraLine = roughShape.majorExtraInk && !legacyStrongComplete;
+  const issues: WholeShapeIssue[] = [];
+  const failedRoughComponents = clearlyMissingModelPath
+    ? roughShape.components.filter((component) => !component.passed)
+    : [];
+  for (const component of failedRoughComponents) {
     issues.push({
       code: "missing-major-shape",
-      // Moderate proportion/placement differences are useful coaching but do
-      // not fail a readable student character. Only absent or grossly
-      // malformed components are correctness errors.
-      severity: severeComponentFailure ? "error" : "warning",
-      message: !component.hasStudentSupport
-        ? `The ${component.label} component ${componentPositionPhrase(component.position)} is missing.`
-        : direction
-          ? `The ${component.label} component ${componentPositionPhrase(component.position)} is ${direction}.`
-          : sizeProblem
-            ? `The ${component.label} component ${componentPositionPhrase(component.position)} is ${sizeProblem}.`
-            : `The ${component.label} component ${componentPositionPhrase(component.position)} is incomplete or misplaced.`,
+      severity: "error",
+      message: `The ${component.label} part is missing one or more required visible pieces.`,
     });
   }
-
-  if (
-    (match.expectedCoverage < WHOLE_SHAPE_MIN_EXPECTED_COVERAGE
-      || directionalExpectedCoverage < WHOLE_SHAPE_MIN_DIRECTIONAL_EXPECTED_COVERAGE
-      || !modelStrokeCompletenessPassed
-      || clearlyMissingModelPath)
-    && !issues.some((issue) => issue.code === "missing-major-shape" && issue.severity === "error")
-  ) {
+  if (clearlyMissingModelPath && roughShape.missingCriticalPieceIds.length > 0) {
     issues.push({
       code: "missing-major-shape",
-      severity: clearlyMissingModelPath ? "error" : "warning",
-      message: clearlyMissingModelPath
-        ? "A required visible line or curve is missing from the character."
-        : "Some strokes differ from the model, but the main character structure is present.",
+      severity: "error",
+      message: roughShape.missingCriticalPieceIds.length === 1
+        ? "One required visible line or curve could not be found."
+        : `${roughShape.missingCriticalPieceIds.length} required visible lines or curves could not be found.`,
+    });
+  } else if (!legacyStrongComplete && roughShape.missingExpectedPieceIds.length > 0) {
+    issues.push({
+      code: "missing-major-shape",
+      severity: "warning",
+      message: "A small model detail is unclear, but all important visible pieces are present.",
     });
   }
-  const extraCell = [...cells]
-    .filter((cell) =>
-      cell.studentPrecision < 0.55
-      && cell.studentShare >= 0.06
-      && cell.studentShare - cell.expectedShare >= 0.08,
-    )
-    .sort((left, right) =>
-      (right.studentShare - right.expectedShare) - (left.studentShare - left.expectedShare),
-    )[0];
-  const broadExtraInk = match.studentPrecision < WHOLE_SHAPE_MIN_STUDENT_PRECISION
-    || directionalStudentPrecision < WHOLE_SHAPE_MIN_DIRECTIONAL_STUDENT_PRECISION
-    || unassignedInkShare > WHOLE_SHAPE_MAX_UNASSIGNED_INK_SHARE
-    || Boolean(extraCell);
-  if (majorExtraLine || broadExtraInk) {
+  const effectiveMinorExtraInk = roughShape.extraStudentPieceIds.length > 0 && !legacyStrongComplete;
+  if (majorExtraLine || effectiveMinorExtraInk) {
     issues.push({
       code: "extra-ink",
       severity: majorExtraLine ? "error" : "warning",
-      cell: extraCell?.region,
-      quadrant: extraCell ? quadrantForCell(extraCell.region) : undefined,
       message: majorExtraLine
         ? "There is a substantial extra line that is not part of this character."
-        : extraCell
-          ? `A little ink in the ${extraCell.region.replace("-", " ")} differs from the model.`
-          : "Some ink sits away from the model; check the shape, but the main structure is still readable.",
+        : "There is a small unmatched mark; it does not change the readable character.",
     });
   }
-  if (closestCompetitor && closestCompetitor.margin < WHOLE_SHAPE_MIN_COMPETITOR_MARGIN) {
+  const reviewedConfusable = closestCompetitor?.source === "known-confusable";
+  if (
+    closestCompetitor
+    && reviewedConfusable
+    && !roughShape.passed
+    && closestCompetitor.margin < WHOLE_SHAPE_MIN_COMPETITOR_MARGIN
+  ) {
     issues.push({
       code: "closer-to-other-character",
       severity: "error",
@@ -1247,6 +1211,7 @@ export function assessWholeCharacterShape(
     });
   } else if (
     closestCompetitor
+    && reviewedConfusable
     && closestCompetitor.margin < STRUCTURAL_GRADING_CONFIG.advisory.competitorTipMargin
   ) {
     issues.push({
@@ -1289,21 +1254,19 @@ export function assessWholeCharacterShape(
   const passed = !hardMetricFailure && !uniqueIssues.some((issue) => issue.severity === "error");
   const decision: WholeShapeDecision = !passed
     ? "fail"
-    : uniqueIssues.some((issue) => issue.severity === "warning") || !modelStrokeCompletenessPassed
+    : uniqueIssues.some((issue) => issue.severity === "warning")
       ? "pass-with-tip"
       : "pass";
   const feedbackCodes = Array.from(new Set<WholeShapeFeedbackCode>([
     ...(clearlyMissingModelPath ? ["MISSING_REQUIRED_PATH" as const] : []),
-    ...(hasSevereComponentFailure
+    ...(failedRoughComponents.length > 0
       ? ["MISSING_MAJOR_COMPONENT" as const] : []),
     ...(majorExtraLine ? ["MAJOR_EXTRA_LINE" as const] : []),
     ...(uniqueIssues.some((issue) => issue.severity === "error" && issue.code === "closer-to-other-character")
       ? ["STRONGER_CONFUSABLE_MATCH" as const] : []),
     ...(uniqueIssues.some((issue) => issue.severity === "warning" && issue.code === "missing-major-shape")
       ? ["REGION_SHAPE_DIFFERS" as const] : []),
-    ...(components.some((component) => !component.passed)
-      ? ["COMPONENT_PROPORTION_DIFFERS" as const] : []),
-    ...(broadExtraInk && !majorExtraLine ? ["MINOR_EXTRA_INK" as const] : []),
+    ...(effectiveMinorExtraInk && !majorExtraLine ? ["MINOR_EXTRA_INK" as const] : []),
     ...(uniqueIssues.some((issue) => issue.severity === "warning" && issue.code === "closer-to-other-character")
       ? ["CLOSE_CONFUSABLE_SHAPE" as const] : []),
     ...(uniqueIssues.some((issue) => issue.severity === "warning" && issue.code.startsWith("too-"))
@@ -1313,6 +1276,7 @@ export function assessWholeCharacterShape(
     passed,
     decision,
     feedbackCodes,
+    roughShape,
     blank: false,
     rawStrokeCount: strokes.length,
     expectedStrokeCount: referencePaths.length,

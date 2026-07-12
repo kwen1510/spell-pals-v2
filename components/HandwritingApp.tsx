@@ -101,8 +101,8 @@ function strokePracticeTips(assessment: StrokeAssessment | undefined, wholeShape
   const tips: string[] = [];
   if (assessment.rawStrokeCount !== assessment.expectedStrokeCount) {
     tips.push(
-      `You used ${assessment.rawStrokeCount} pen movement${assessment.rawStrokeCount === 1 ? "" : "s"}; `
-      + `the model uses ${assessment.expectedStrokeCount} strokes. This does not fail a readable character.`,
+      `You used ${assessment.rawStrokeCount} pen movement${assessment.rawStrokeCount === 1 ? "" : "s"}. `
+      + "Joined or split movements do not affect the result; the visible lines, curves, and character parts do.",
     );
   }
   if (assessment.strokeOrderWarning) {
@@ -128,12 +128,17 @@ function componentPositionLabel(position: ShapeAssessment["components"][number][
 
 function ShapePreview({ assessment, expected }: { assessment: ShapeAssessment; expected: string }) {
   const studentPaths = assessment.studentPaths ?? [];
+  const missingRoughPieces = assessment.passed ? [] : assessment.roughShape?.expectedPieces
+    .filter((piece) => assessment.roughShape?.missingExpectedPieceIds.includes(piece.id))
+    .map((piece) => piece.points.map((point) => ({ x: point.x * 1024, y: point.y * 1024 }))) ?? [];
   const failedExpectedIndices = new Set(
     assessment.components
       .filter((component) => !component.passed)
       .flatMap((component) => component.expectedStrokeIndices),
   );
-  const referencePaths = assessment.passed
+  const referencePaths = missingRoughPieces.length
+    ? missingRoughPieces
+    : assessment.passed
     ? []
     : failedExpectedIndices.size
       ? assessment.referencePaths.filter((_, index) => failedExpectedIndices.has(index))
@@ -937,15 +942,23 @@ export function HandwritingApp() {
                 errorIssues.push("A required part of the character is missing or substantially different.");
               }
               const practiceTips = strokePracticeTips(strokeAssessment, assessment?.passed ?? false);
+              const requiredVisiblePieces = assessment?.roughShape?.expectedPieces.filter((piece) => piece.required) ?? [];
+              const matchedVisiblePieces = assessment?.roughShape
+                ? requiredVisiblePieces.filter((piece) => assessment.roughShape?.matchedExpectedPieceIds.includes(piece.id)).length
+                : 0;
               return (
                 <article className={passed ? "match" : "mismatch"} key={index}>
                   <div className="character-facts">
                     <span>Expected</span><strong>{expected}</strong>
                     <span>Top guess</span><strong>{result.detectedCharacters[index] || "No match"}</strong>
                     <span>Expected rank</span><strong className="rank-value">{rank ?? "Not found"}</strong>
-                    <span>Pen movements</span>
+                    <span>Visible pieces</span>
                     <strong className="count-value">
-                      {assessment ? `${assessment.rawStrokeCount} used · model has ${assessment.expectedStrokeCount} strokes` : "Not checked"}
+                      {assessment?.roughShape
+                        ? assessment.passed
+                          ? "All required pieces found"
+                          : `${matchedVisiblePieces} of ${requiredVisiblePieces.length} required pieces found`
+                        : "Not checked"}
                     </strong>
                   </div>
                   <p className={`shape-status ${assessment?.passed ? "passed" : "failed"}`}>
@@ -964,7 +977,7 @@ export function HandwritingApp() {
                       <div>
                         {assessment.components.map((component) => (
                           <span className={component.passed ? "passed" : "failed"} key={component.id}>
-                            <b>{component.label}</b> {componentPositionLabel(component.position)} · {component.passed ? "in place" : "practise this part"}
+                            <b>{component.label}</b> {componentPositionLabel(component.position)} · {component.passed ? "all pieces present" : "a piece needs checking"}
                           </span>
                         ))}
                       </div>

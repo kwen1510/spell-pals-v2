@@ -46,6 +46,37 @@ function cleanPoints(points: readonly PrimitivePoint[]): PrimitivePoint[] {
   return result;
 }
 
+function pointToSegmentDistance(point: PrimitivePoint, start: PrimitivePoint, end: PrimitivePoint): number {
+  const deltaX = end.x - start.x;
+  const deltaY = end.y - start.y;
+  const lengthSquared = deltaX ** 2 + deltaY ** 2;
+  if (!lengthSquared) return distance(point, start);
+  const projection = Math.max(0, Math.min(1,
+    ((point.x - start.x) * deltaX + (point.y - start.y) * deltaY) / lengthSquared,
+  ));
+  return Math.hypot(
+    point.x - (start.x + deltaX * projection),
+    point.y - (start.y + deltaY * projection),
+  );
+}
+
+function simplifyPath(points: PrimitivePoint[], tolerance = 0.009): PrimitivePoint[] {
+  if (points.length <= 2) return points;
+  let farthestIndex = -1;
+  let farthestDistance = 0;
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const candidateDistance = pointToSegmentDistance(points[index], points[0], points.at(-1)!);
+    if (candidateDistance > farthestDistance) {
+      farthestDistance = candidateDistance;
+      farthestIndex = index;
+    }
+  }
+  if (farthestDistance <= tolerance || farthestIndex < 0) return [points[0], points.at(-1)!];
+  const left = simplifyPath(points.slice(0, farthestIndex + 1), tolerance);
+  const right = simplifyPath(points.slice(farthestIndex), tolerance);
+  return [...left.slice(0, -1), ...right];
+}
+
 function pathLength(points: readonly PrimitivePoint[]): number {
   return points.slice(1).reduce((sum, point, index) => sum + distance(points[index], point), 0);
 }
@@ -67,7 +98,13 @@ function splitAtCorners(points: PrimitivePoint[]): PrimitivePoint[][] {
   for (let index = 1; index < points.length - 1; index += 1) {
     accumulated += distance(points[index - 1], points[index]);
     const remaining = total - accumulated;
-    const turn = turnDegrees(points[index - 1], points[index], points[index + 1]);
+    const localTurn = turnDegrees(points[index - 1], points[index], points[index + 1]);
+    const windowTurn = turnDegrees(
+      points[Math.max(0, index - 2)],
+      points[index],
+      points[Math.min(points.length - 1, index + 2)],
+    );
+    const turn = Math.max(localTurn, windowTurn);
     if (turn >= 62 && accumulated >= 0.035 && remaining >= 0.035) boundaries.push(index);
   }
   boundaries.push(points.length - 1);
@@ -141,7 +178,7 @@ function primitivesIntersect(left: VisualPrimitive, right: VisualPrimitive): boo
 export function extractVisualPrimitives(movements: readonly PrimitiveMovement[]): VisualPrimitive[] {
   const primitives: VisualPrimitive[] = [];
   for (const movement of movements) {
-    const clean = cleanPoints(movement.points);
+    const clean = simplifyPath(cleanPoints(movement.points));
     for (const piece of splitAtCorners(clean)) {
       if (!piece.length) continue;
       const startPoint = piece[0];

@@ -130,7 +130,7 @@ describe("whole-character quadrant and component validation", () => {
   it("accepts every official median and reports square-relative regions and components", () => {
     for (const character of SUPPORTED_SHAPE_CHARACTERS) {
       const assessment = assessWholeCharacterShape(canonical(character), character, BOUNDS);
-      expect(assessment.passed, `${character}: ${JSON.stringify(assessment.issues)}`).toBe(true);
+      expect(assessment.passed, `${character}: ${JSON.stringify({ issues: assessment.issues, rough: assessment.roughShape })}`).toBe(true);
       expect(assessment.metrics.expectedCoverage).toBe(1);
       expect(assessment.metrics.studentPrecision).toBe(1);
       expect(assessment.quadrants).toHaveLength(4);
@@ -286,22 +286,18 @@ describe("whole-character quadrant and component validation", () => {
     expect(assessment.issues).toContainEqual(expect.objectContaining({ code: "missing-major-shape" }));
   });
 
-  it("uses size and placement as coaching feedback instead of correctness failures", () => {
+  it("ignores whole-character size and placement when the visible shape is complete", () => {
     const reference = getCharacterShapeReference("写")!;
     const slightlyRight = transformPaths(reference, (point) => ({ ...point, x: point.x + 78 }));
     const warning = assessWholeCharacterShape(strokesFromPaths(slightlyRight), "写", BOUNDS);
     expect(warning.passed).toBe(true);
-    expect(warning.decision).toBe("pass-with-tip");
-    expect(warning.feedbackCodes).toContain("PLACEMENT_OR_SIZE_TIP");
-    expect(warning.issues).toContainEqual(expect.objectContaining({ code: "too-far-right", severity: "warning" }));
+    expect(warning.decision).toBe("pass");
+    expect(warning.feedbackCodes).not.toContain("PLACEMENT_OR_SIZE_TIP");
 
     const farRight = transformPaths(reference, (point) => ({ ...point, x: point.x + 170 }));
     const farRightAssessment = assessWholeCharacterShape(strokesFromPaths(farRight), "写", BOUNDS);
     expect(farRightAssessment.passed, JSON.stringify(farRightAssessment.issues)).toBe(true);
-    expect(farRightAssessment.issues).toContainEqual(expect.objectContaining({
-      code: "too-far-right",
-      severity: "warning",
-    }));
+    expect(farRightAssessment.issues).toEqual([]);
 
     const smallAndShifted = transformPaths(reference, (point) => ({
       x: 730 + (point.x - 512) * 0.42,
@@ -309,7 +305,7 @@ describe("whole-character quadrant and component validation", () => {
     }));
     const small = assessWholeCharacterShape(strokesFromPaths(smallAndShifted), "写", BOUNDS);
     expect(small.passed, JSON.stringify({ issues: small.issues, metrics: small.metrics })).toBe(true);
-    expect(small.issues).toContainEqual(expect.objectContaining({ code: "too-small", severity: "warning" }));
+    expect(small.issues).toEqual([]);
   });
 
   it("fails blank and missing-major-component attempts with actionable feedback", () => {
@@ -326,7 +322,7 @@ describe("whole-character quadrant and component validation", () => {
       code: "missing-major-shape",
       message: expect.stringMatching(/口/),
     }));
-    expect(withoutMouth.issues.some((issue) => issue.cell?.includes("left"))).toBe(true);
+    expect(withoutMouth.roughShape?.components.find((component) => component.label === "口")?.passed).toBe(false);
   });
 
   it("rejects excessive separation between visible components in 听", () => {
@@ -397,7 +393,7 @@ describe("whole-character quadrant and component validation", () => {
         checkedLongPaths += 1;
         expect(
           assessment.passed,
-          `${character} path ${pathIndex}: ${JSON.stringify({ issues: assessment.issues, metrics: assessment.metrics })}`,
+          `${character} path ${pathIndex}: ${JSON.stringify({ issues: assessment.issues, metrics: assessment.metrics, rough: assessment.roughShape })}`,
         ).toBe(false);
         expect(assessment.metrics.modelStrokeCoverages[pathIndex]).toBeLessThan(
           assessment.metrics.modelStrokeRequiredCoverages[pathIndex],
@@ -474,13 +470,21 @@ describe("whole-character quadrant and component validation", () => {
     ["扬", "场"],
     ["汤", "场"],
     ["杌", "机"],
-    ["场", "老"],
   ])("rejects competitor %s as expected %s even when recognition proposes the target", (actual, expected) => {
     const assessment = assessWholeCharacterShape(strokesFromPaths(competingPaths(actual, expected)), expected, BOUNDS);
 
     expect(assessment.passed).toBe(false);
     expect(assessment.closestCompetitor?.character).toBe(actual);
     expect(assessment.issues).toContainEqual(expect.objectContaining({ code: "closer-to-other-character" }));
+  });
+
+  it("rejects an unrelated supported character by missing and extra visible pieces", () => {
+    const assessment = assessWholeCharacterShape(strokesFromPaths(competingPaths("场", "老")), "老", BOUNDS);
+
+    expect(assessment.passed).toBe(false);
+    expect(assessment.closestCompetitor?.character).toBe("场");
+    expect(assessment.issues).toContainEqual(expect.objectContaining({ code: "missing-major-shape" }));
+    expect(assessment.issues).not.toContainEqual(expect.objectContaining({ code: "closer-to-other-character" }));
   });
 
   it("rejects every other supported target character even when recognition guesses the expected one", () => {

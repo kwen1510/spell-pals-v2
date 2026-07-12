@@ -25,6 +25,18 @@ describe("visual primitive extraction", () => {
     expect(new Set(primitives.flatMap((primitive) => primitive.sourceMovementIds))).toEqual(new Set(["box"]));
   });
 
+  it("finds rounded corners after simplifying dense pointer points", () => {
+    const primitives = extractVisualPrimitives([{
+      id: "rounded-box",
+      points: [
+        { x: 0.2, y: 0.2 }, { x: 0.4, y: 0.2 }, { x: 0.62, y: 0.2 },
+        { x: 0.68, y: 0.23 }, { x: 0.7, y: 0.3 }, { x: 0.7, y: 0.55 },
+        { x: 0.68, y: 0.66 }, { x: 0.6, y: 0.7 }, { x: 0.35, y: 0.7 },
+      ],
+    }]);
+    expect(primitives.length).toBeGreaterThanOrEqual(3);
+  });
+
   it("records intersections independently of pen lifts", () => {
     const primitives = extractVisualPrimitives([
       { id: "one", points: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.9 }] },
