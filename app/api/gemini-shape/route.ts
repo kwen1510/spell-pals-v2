@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCharacterTemplate } from "../../../lib/handwriting/character-template";
-import { assessShapeWithGemini } from "../../../lib/handwriting/gemini-shape-experiment";
+import { assessShapeWithGemini, GEMINI_SHAPE_MODEL } from "../../../lib/handwriting/gemini-shape-experiment";
 import type { Stroke } from "../../../lib/handwriting/types";
+import { isRequestAuthenticated } from "../../../lib/auth/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +11,7 @@ const MAX_STROKES = 128;
 const MAX_POINTS = 12_000;
 const MAX_BODY_CHARACTERS = 2_000_000;
 const WINDOW_MS = 60_000;
-const REQUESTS_PER_WINDOW = 8;
+const REQUESTS_PER_WINDOW = 30;
 const requests = new Map<string, { count: number; resetAt: number }>();
 
 function apiKey() {
@@ -71,12 +72,14 @@ function validatedStrokes(value: unknown): Stroke[] | null {
   return value.reduce((sum, stroke) => sum + stroke.points.length, 0) <= MAX_POINTS ? value : null;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  if (!isRequestAuthenticated(request)) return json({ message: "Authentication required." }, 401);
   const available = Boolean(apiKey()) && experimentEnabled();
-  return json({ available, model: "gemini-3.1-pro-preview", experimental: true }, available ? 200 : 503);
+  return json({ available, model: GEMINI_SHAPE_MODEL, experimental: true }, available ? 200 : 503);
 }
 
 export async function POST(request: NextRequest) {
+  if (!isRequestAuthenticated(request)) return json({ message: "Authentication required." }, 401);
   const key = apiKey();
   if (!experimentEnabled()) return json({ message: "The Gemini shape experiment is disabled in production." }, 404);
   if (!key) return json({ message: "GEMINI_API_KEY is not configured." }, 503);
@@ -108,7 +111,7 @@ export async function POST(request: NextRequest) {
       studentPaths: strokes.map((stroke) => stroke.points.map((point) => ({ x: point.x, y: point.y }))),
       signal: controller.signal,
     });
-    return json({ assessment, model: "gemini-3.1-pro-preview", experimental: true });
+    return json({ assessment, model: GEMINI_SHAPE_MODEL, experimental: true });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       return json({ message: "Gemini took too long to assess this character." }, 504);

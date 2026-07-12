@@ -15,6 +15,26 @@ button, input, select { font: inherit; }
 button { color: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 4px solid rgba(21,159,130,.24); outline-offset: 3px; }
 
+.login-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; background: radial-gradient(circle at 12% 8%, #fff4cf 0 7%, transparent 22%), radial-gradient(circle at 88% 90%, #cff3e7 0 9%, transparent 25%), #f7fbf8; }
+.login-card { width: min(440px, 100%); min-width: 0; padding: clamp(26px, 7vw, 44px); border: 2px solid #d7e9e1; border-radius: 30px; background: rgba(255,255,255,.96); box-shadow: 0 24px 70px rgba(32,71,58,.12); text-align: center; }
+.login-mark { display: grid; width: 68px; height: 68px; margin: 0 auto 20px; place-items: center; border-radius: 22px; transform: rotate(-4deg); background: var(--teal); color: white; font: 900 40px/1 "Kaiti SC", STKaiti, serif; box-shadow: 0 7px 0 var(--teal-dark); }
+.login-card h1 { margin: 0; font-size: clamp(2rem, 8vw, 3.1rem); letter-spacing: -.04em; }
+.login-copy, .configuration-error > p:last-child { margin: 12px 0 24px; color: var(--muted); line-height: 1.55; }
+.configuration-error code { overflow-wrap: anywhere; }
+.login-form { display: grid; gap: 10px; text-align: left; }
+.login-form label { color: #536a61; font-size: .82rem; font-weight: 900; }
+.login-form input { width: 100%; min-width: 0; min-height: 50px; padding: 10px 13px; border: 2px solid #cfe3da; border-radius: 13px; background: #fffefb; color: var(--ink); font-size: 1rem; }
+.login-form input[aria-invalid="true"] { border-color: #e89a8b; }
+.login-form button { min-height: 50px; margin-top: 4px; padding: 10px 16px; border: 0; border-radius: 13px; background: var(--teal); color: white; font-weight: 950; cursor: pointer; box-shadow: 0 5px 0 var(--teal-dark); }
+.login-form button:disabled { cursor: not-allowed; opacity: .52; }
+.login-error { margin: 0; padding: 10px 12px; border-radius: 10px; background: #fff0eb; color: #9b3d32; font-size: .84rem; font-weight: 800; line-height: 1.4; }
+.session-bar { position: relative; z-index: 10; min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 7px max(14px, env(safe-area-inset-right)) 7px max(14px, env(safe-area-inset-left)); border-bottom: 1px solid #d5e8df; background: #fffefb; }
+.session-bar p { min-width: 0; margin: 0; color: #536a61; font-size: .78rem; font-weight: 850; }
+.session-bar p span { display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: #22a66f; }
+.session-bar button { min-height: 38px; padding: 7px 13px; border: 2px solid #cfe3da; border-radius: 11px; background: white; font-size: .8rem; font-weight: 900; cursor: pointer; }
+.session-bar button:disabled { cursor: not-allowed; opacity: .55; }
+.authenticated-shell .home-shell, .authenticated-shell .practice-shell { min-height: calc(100vh - 52px); }
+
 .home-shell, .practice-shell { min-height: 100vh; background: radial-gradient(circle at 12% 8%, #fff4cf 0 7%, transparent 22%), radial-gradient(circle at 88% 90%, #cff3e7 0 9%, transparent 25%), #f7fbf8; }
 .home-shell { display: grid; place-items: center; padding: 32px 20px; }
 .welcome-card { width: min(920px, 100%); padding: clamp(28px, 5vw, 58px); border: 2px solid #d7e9e1; border-radius: 34px; background: rgba(255,255,255,.9); box-shadow: 0 24px 70px rgba(32,71,58,.12); text-align: center; }
@@ -88,7 +108,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 4px s
 .canvas-host canvas { z-index: 2; cursor: crosshair; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .guide-svg { z-index: 1; overflow: visible; pointer-events: none; user-select: none; -webkit-user-select: none; }
 .trace-model-svg { z-index: 1; overflow: hidden; pointer-events: none; user-select: none; -webkit-user-select: none; }
-.trace-model-svg polyline { fill: none; stroke: #ef8b75; stroke-width: 18; stroke-linecap: round; stroke-linejoin: round; opacity: .28; }
+.trace-model-svg text { fill: #ef8b75; opacity: .22; font: 700 228px/1 "Kaiti SC", STKaiti, KaiTi, "KaiTi SC", serif; }
 .board-pan-strip { display: none; }
 .action-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 17px; }
 .action-row p { margin: 0; color: var(--muted); font-size: .86rem; font-weight: 750; }

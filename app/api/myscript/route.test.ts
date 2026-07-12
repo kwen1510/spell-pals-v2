@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { computeMyScriptHmac } from "../../../lib/handwriting/myscript-api";
+import { createSessionToken, SESSION_COOKIE_NAME } from "../../../lib/auth/session";
 import { GET, POST } from "./route";
 
 const SAMPLE_STROKES = [{
@@ -20,6 +21,7 @@ function recognitionRequest(body: unknown, origin = "https://example.test") {
       Origin: origin,
       "Sec-Fetch-Site": "same-origin",
       "X-Forwarded-For": `test-${crypto.randomUUID()}`,
+      Cookie: `${SESSION_COOKIE_NAME}=${createSessionToken("test-password")}`,
     },
     body: JSON.stringify(body),
   });
@@ -29,18 +31,30 @@ describe("MyScript API route", () => {
   beforeEach(() => {
     process.env.MYSCRIPT_APPLICATION_KEY = "test-application";
     process.env.MYSCRIPT_HMAC_KEY = "test-hmac";
+    process.env.PASSWORD = "test-password";
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
     delete process.env.MYSCRIPT_APPLICATION_KEY;
     delete process.env.MYSCRIPT_HMAC_KEY;
+    delete process.env.PASSWORD;
   });
 
   it("reports whether server-only credentials are configured", async () => {
-    expect((await GET()).status).toBe(200);
+    const request = recognitionRequest({ strokes: SAMPLE_STROKES });
+    expect((await GET(request)).status).toBe(200);
     delete process.env.MYSCRIPT_HMAC_KEY;
-    expect((await GET()).status).toBe(503);
+    expect((await GET(request)).status).toBe(503);
+  });
+
+  it("requires an authenticated session before exposing or calling the recognizer", async () => {
+    const request = new NextRequest("https://example.test/api/myscript", { method: "GET" });
+    expect((await GET(request)).status).toBe(401);
+    expect((await POST(new NextRequest("https://example.test/api/myscript", {
+      method: "POST",
+      body: JSON.stringify({ strokes: SAMPLE_STROKES }),
+    }))).status).toBe(401);
   });
 
   it("signs and forwards a schema-conformant request without browser-private IDs", async () => {

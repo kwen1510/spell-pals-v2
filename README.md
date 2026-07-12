@@ -39,9 +39,13 @@ Timestamps help identify pauses and accidentally joined strokes. Pressure is ret
 
 Copy `.env.example` to `.env.local` and set `MYSCRIPT_APPLICATION_KEY` and `MYSCRIPT_HMAC_KEY`. Keep both values server-side; neither key belongs in a `NEXT_PUBLIC_` variable.
 
+## Password login
+
+Set the server-side `PASSWORD` environment variable. A successful login creates a seven-day, HttpOnly, SameSite=Strict session cookie signed with an HMAC derived from that password. Changing `PASSWORD` invalidates existing sessions. The page and server recognition routes reject unauthenticated requests; logging out immediately expires the cookie.
+
 ## Experimental Gemini shape assessor
 
-The development-only `/api/gemini-shape` route compares normalized student ink with the grounded Make Me a Hanzi component template using `gemini-3.1-pro-preview`. Configure `GEMINI_API_KEY` locally and run `npm run experiment:gemini-shape` for the synthetic calibration set. The experiment is disabled in production unless `GEMINI_SHAPE_EXPERIMENT_ENABLED=true` is explicitly configured. Gemini output does not override the deterministic grader.
+The `/api/gemini-shape` route compares normalized student ink with the grounded Make Me a Hanzi component template using `gemini-3-flash-preview`, structured output, temperature `0`, and the model's minimum supported thinking level. Configure `GEMINI_API_KEY` locally and run `npm run experiment:gemini-shape` for the synthetic calibration set. It is disabled in production unless `GEMINI_SHAPE_EXPERIMENT_ENABLED=true` is explicitly configured. Gemini can downgrade an otherwise-correct result when it finds a missing or extra visible part, but it can never turn a deterministic failure into a pass. Its structured output is shown only in development diagnostics.
 
 ## Deploy to Vercel
 

@@ -21,9 +21,9 @@ export function resultHeading(status: MarkingStatus, detailedFeedback: boolean):
 }
 
 export function simpleResultMessage(status: MarkingStatus): string {
-  if (status === "correct" || status === "tip") return "Your answer passed both the recognition and shape checks.";
+  if (status === "correct" || status === "tip") return "Your answer is correct.";
   if (status === "incomplete") return "Write one character in every square, then mark your answer again.";
-  return "This answer did not pass both the recognition and shape checks.";
+  return "This answer is not correct yet. Try writing it again or practise on the template.";
 }
 
 export function compactResultTone(status: MarkingStatus): "pass" | "fail" {

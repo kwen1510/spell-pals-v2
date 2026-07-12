@@ -7,6 +7,7 @@ import {
   type MyScriptJiix,
 } from "../../../lib/handwriting/myscript-api";
 import type { Stroke } from "../../../lib/handwriting/types";
+import { isRequestAuthenticated } from "../../../lib/auth/session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,11 +83,13 @@ function validateStrokes(value: unknown): Stroke[] | null {
   return pointCount <= MAX_POINTS ? value : null;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  if (!isRequestAuthenticated(request)) return json({ message: "Authentication required." }, 401);
   return json({ available: Boolean(credentials()) }, credentials() ? 200 : 503);
 }
 
 export async function POST(request: NextRequest) {
+  if (!isRequestAuthenticated(request)) return json({ message: "Authentication required." }, 401);
   const keys = credentials();
   if (!keys) return json({ message: "MyScript is not configured on this deployment." }, 503);
   if (!sameOrigin(request)) return json({ message: "This recognition request was not accepted." }, 403);

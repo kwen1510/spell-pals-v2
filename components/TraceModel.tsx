@@ -1,20 +1,14 @@
 import React from "react";
-import { getCharacterShapeReference } from "../lib/handwriting/character-shape-references";
 
 interface TraceModelProps {
   characters: string;
 }
 
 const SQUARE_SIZE = 300;
-const REFERENCE_SIZE = 1024;
-
-function pointsAttribute(points: Array<{ x: number; y: number }>) {
-  return points.map((point) => `${point.x},${point.y}`).join(" ");
-}
 
 /**
- * A display-only tracing model. It is a sibling of the drawing canvas, so
- * none of these reference paths can leak into handwriting recognition.
+ * A display-only glyph model. It sits below the drawing canvas, so the glyph
+ * is never captured or sent to recognition and disappears when practice ends.
  */
 export function TraceModel({ characters }: TraceModelProps) {
   const values = Array.from(characters);
@@ -25,23 +19,17 @@ export function TraceModel({ characters }: TraceModelProps) {
       preserveAspectRatio="xMinYMin meet"
       aria-hidden="true"
     >
-      {values.map((character, characterIndex) => {
-        const paths = getCharacterShapeReference(character) ?? [];
-        return (
-          <g
-            key={`${character}-${characterIndex}`}
-            transform={`translate(${characterIndex * SQUARE_SIZE} 0) scale(${SQUARE_SIZE / REFERENCE_SIZE})`}
-          >
-            {paths.map((path, strokeIndex) => (
-              <polyline
-                key={strokeIndex}
-                points={pointsAttribute(path)}
-                data-stroke-number={strokeIndex + 1}
-              />
-            ))}
-          </g>
-        );
-      })}
+      {values.map((character, characterIndex) => (
+        <text
+          key={`${character}-${characterIndex}`}
+          x={characterIndex * SQUARE_SIZE + SQUARE_SIZE / 2}
+          y={SQUARE_SIZE / 2}
+          dominantBaseline="central"
+          textAnchor="middle"
+        >
+          {character}
+        </text>
+      ))}
     </svg>
   );
 }

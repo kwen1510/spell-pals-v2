@@ -1,5 +1,5 @@
 import { getCharacterTemplate } from "../lib/handwriting/character-template";
-import { assessShapeWithGemini } from "../lib/handwriting/gemini-shape-experiment";
+import { assessShapeWithGemini, GEMINI_SHAPE_MODEL } from "../lib/handwriting/gemini-shape-experiment";
 import { assessRoughShape } from "../lib/handwriting/rough-shape-matcher";
 import type { PrimitivePoint } from "../lib/handwriting/primitive-analysis";
 
@@ -79,7 +79,9 @@ for (const testCase of cases) {
 }
 
 console.log(JSON.stringify({
-  model: "gemini-3.1-pro-preview",
+  model: GEMINI_SHAPE_MODEL,
+  thinkingLevel: "minimal",
+  temperature: 0,
   cases: results,
   agreement: `${results.filter((result) => result.geminiAgreed).length}/${results.length}`,
 }, null, 2));

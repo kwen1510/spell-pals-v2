@@ -26,7 +26,7 @@ The writing grid, toolbar, expected-answer card, and recognizer result are not r
 
 ## Initial local result (2026-07-13)
 
-Model: `gemini-3.1-pro-preview`, temperature 0, structured JSON output.
+First baseline: `gemini-3.1-pro-preview`, temperature 0, structured JSON output.
 
 | Controlled case | Expected | Gemini | Deterministic | Latency |
 |---|---|---|---|---:|
@@ -38,9 +38,33 @@ Model: `gemini-3.1-pro-preview`, temperature 0, structured JSON output.
 
 Agreement was 5/5 on this small synthetic feasibility set. This does not establish classroom accuracy. The next useful gate is a blinded set of natural Apple Pencil attempts and deliberate errors that were not used to write the prompt.
 
+Flash-Lite was then tested using stable `gemini-3.1-flash-lite` with structured JSON, temperature `0`, and `thinking_level: "minimal"`. Gemini 3.1 does not support a literal zero thinking budget; `minimal` is its closest supported setting.
+
+| Flash-Lite controlled case | Expected | Gemini | Latency |
+|---|---|---|---:|
+| Official complete `听` median | pass | pass | 1.8 s |
+| Missing bottom line of `口` | fail | **pass** | 1.7 s |
+| Continuous one-movement `口` | pass | **fail** | 1.9 s |
+| Modest whole-character distortion | pass | pass | 1.6 s |
+| Substantial unrelated extra diagonal | fail | fail | 2.1 s |
+
+Flash-Lite agreement was 3/5. It was fast but failed both tests that distinguish visible shape from official pen-lift structure, so it is not suitable as the correctness gate.
+
+The active comparison now uses `gemini-3-flash-preview` with the same structured schema, temperature `0`, and `thinking_level: "minimal"`.
+
+| Gemini 3 Flash controlled case | Expected | Gemini | Latency |
+|---|---|---|---:|
+| Official complete `听` median | pass | pass | 2.8 s |
+| Missing bottom line of `口` | fail | fail | 2.6 s |
+| Continuous one-movement `口` | pass | pass | 2.7 s |
+| Modest whole-character distortion | pass | pass | 2.4 s |
+| Substantial unrelated extra diagonal | fail | fail | 3.4 s |
+
+Gemini 3 Flash agreement was 5/5. It preserved the Pro model's result on this small set at roughly one sixth of the latency. Natural, blinded Apple Pencil attempts are still required before it can influence student correctness.
+
 ## Current recommendation
 
-Keep deterministic visible-piece matching as the instant primary gate. Gemini 3.1 Pro is currently too slow and costly for per-character primary grading, but it is promising as:
+Keep deterministic visible-piece matching as the instant primary gate. The Gemini 3 Flash rerun determines whether the Gemini path is sufficiently fast and accurate for an optional second opinion. It is potentially useful as:
 
 - a second opinion for deterministic `uncertain` cases;
 - a teacher-only diagnostic experiment;

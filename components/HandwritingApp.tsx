@@ -5,10 +5,7 @@ import { ChineseGuide, guideBoardStyle } from "./ChineseGuide";
 import { TraceModel } from "./TraceModel";
 import {
   compactResultTone,
-  DETAILED_FEEDBACK_STORAGE_KEY,
-  parseDetailedFeedbackPreference,
   resultHeading,
-  serializeDetailedFeedbackPreference,
   simpleResultMessage,
 } from "./feedback-mode";
 import { HanziLookupRecognizer } from "@/lib/handwriting/recognizer";
@@ -31,6 +28,16 @@ type ResultStatus = MarkingStatus;
 type ShapeAssessment = ReturnType<typeof assessWholeCharacterShape>;
 type StrokeAssessment = ReturnType<typeof assessCharacterShape>;
 type DiagnosticAttempt = ReturnType<typeof diagnosticAttempt>;
+type GeminiShapeAssessment = {
+  verdict: "correct_shape" | "incorrect_shape" | "uncertain";
+  recognizableAsExpected: boolean;
+  allRequiredVisiblePiecesPresent: boolean;
+  hasSubstantialExtraMark: boolean;
+  components: Array<{ id: string; label: string; status: "present" | "incomplete" | "missing"; issues: string[] }>;
+  missingPieces: Array<{ componentId: string; description: string }>;
+  extraPieces: Array<{ description: string }>;
+  summary: string;
+};
 
 const RECOGNITION_METHODS: RecognitionMethod[] = ["local", "myscript"];
 const RECOGNITION_LABELS: Record<RecognitionMethod, string> = {
@@ -55,6 +62,25 @@ interface Result {
   status: ResultStatus;
   weakSplit: boolean;
   method: RecognitionMethod;
+  geminiAssessments: Array<GeminiShapeAssessment | null>;
+  geminiPassed: boolean;
+}
+
+async function requestGeminiAssessment(expected: string, strokes: Stroke[]): Promise<GeminiShapeAssessment | null> {
+  if (!strokes.length) return null;
+  const response = await fetch("/api/gemini-shape", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ expected, strokes }),
+  });
+  const payload = await response.json().catch(() => ({})) as {
+    assessment?: GeminiShapeAssessment;
+    message?: string;
+  };
+  if (!response.ok || !payload.assessment) {
+    throw new Error(payload.message || "Gemini shape checking is unavailable.");
+  }
+  return payload.assessment;
 }
 
 function pointPair(point: unknown): [number, number] | null {
@@ -251,8 +277,7 @@ export function HandwritingApp() {
   const [marking, setMarking] = useState(false);
   const [message, setMessage] = useState("");
   const [result, setResult] = useState<Result | null>(null);
-  const [detailedFeedback, setDetailedFeedback] = useState(true);
-  const [feedbackPreferenceReady, setFeedbackPreferenceReady] = useState(false);
+  const detailedFeedback = false;
   const [traceTarget, setTraceTarget] = useState<string | null>(null);
   const [dimensions, setDimensions] = useState({ width: 600, height: 300 });
   const [debugSeparators, setDebugSeparators] = useState<number[]>([]);
@@ -280,27 +305,6 @@ export function HandwritingApp() {
   const recognitionLabel = RECOGNITION_LABELS[recognitionMethod];
 
   useEffect(() => { strokesRef.current = strokes; }, [strokes]);
-
-  useEffect(() => {
-    try {
-      setDetailedFeedback(parseDetailedFeedbackPreference(window.localStorage.getItem(DETAILED_FEEDBACK_STORAGE_KEY)));
-    } catch {
-      // Storage can be unavailable in private browsing; keep the default.
-    }
-    setFeedbackPreferenceReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (!feedbackPreferenceReady) return;
-    try {
-      window.localStorage.setItem(
-        DETAILED_FEEDBACK_STORAGE_KEY,
-        serializeDetailedFeedbackPreference(detailedFeedback),
-      );
-    } catch {
-      // The preference still works for this session when storage is unavailable.
-    }
-  }, [detailedFeedback, feedbackPreferenceReady]);
 
   useEffect(() => {
     if (!result) return;
@@ -699,13 +703,22 @@ export function HandwritingApp() {
     const attempt = diagnosticAttempt(markStrokes);
     setDebugSeparators(segmentation.separators);
     try {
-      const predictions = await Promise.all(segmentation.groups.map((group) => selectedRecognizer.recognise(group, 15)));
+      const [predictions, geminiAssessments] = await Promise.all([
+        Promise.all(segmentation.groups.map((group) => selectedRecognizer.recognise(group, 15))),
+        Promise.all(segmentation.groups.map((group, index) => requestGeminiAssessment(characters[index], group))),
+      ]);
       if (version !== requestVersionRef.current) return;
       setRecognizerEvidence((evidence) => ({ ...evidence, [method]: predictions }));
       const grade = gradeRankedCandidates(target, predictions, acceptanceThreshold);
       const shapeAssessments = segmentation.groups.map((group, index) => assessWholeCharacterShape(group, characters[index], regions[index]));
       const strokeAssessments = segmentation.groups.map((group, index) => assessCharacterShape(group, characters[index], regions[index]));
-      const status: ResultStatus = markingStatus(grade.correct, shapeAssessments, characters.length);
+      const deterministicStatus: ResultStatus = markingStatus(grade.correct, shapeAssessments, characters.length);
+      const geminiPassed = geminiAssessments.every((assessment, index) => (
+        segmentation.groups[index].length === 0 || assessment?.verdict === "correct_shape"
+      ));
+      const status: ResultStatus = (deterministicStatus === "correct" || deterministicStatus === "tip") && !geminiPassed
+        ? "shape"
+        : deterministicStatus;
       const detectedCharacters = grade.detectedCharacters;
       const detected = detectedCharacters.map((character) => character || "No match").join(" · ");
       setResult({
@@ -725,6 +738,8 @@ export function HandwritingApp() {
         status,
         weakSplit: segmentation.weak,
         method,
+        geminiAssessments,
+        geminiPassed,
       });
     } catch (error) {
       if (version === requestVersionRef.current) {
@@ -754,6 +769,7 @@ export function HandwritingApp() {
       candidates: result?.predictions ?? recognizerEvidence[recognitionMethod],
       shapeAssessments: result?.shapeAssessments ?? null,
       strokeAssessments: result?.strokeAssessments ?? null,
+      geminiAssessments: result?.geminiAssessments ?? null,
       result: result ? {
         detectedCharacters: result.detectedCharacters,
         expectedRanks: result.expectedRanks,
@@ -847,20 +863,6 @@ export function HandwritingApp() {
           <div className="mode-toggle" aria-label="Writing guide mode">
             <button className={guideMode === "free" ? "active" : ""} onClick={() => selectGuideMode("free")}>Free canvas</button>
             <button className={guideMode === "boxes" ? "active" : ""} onClick={() => selectGuideMode("boxes")}>田字格</button>
-          </div>
-          <div className="feedback-control">
-            <span id="feedback-control-label">Feedback</span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={detailedFeedback}
-              aria-labelledby="feedback-control-label feedback-control-value"
-              onClick={() => setDetailedFeedback((value) => !value)}
-            >
-              <span className="feedback-switch-track" aria-hidden="true"><span /></span>
-              <strong id="feedback-control-value">{detailedFeedback ? "On" : "Off"}</strong>
-            </button>
-            <small>{detailedFeedback ? "Show guidance" : "Result only"}</small>
           </div>
           <div className="tool-group history-group">
             <button className="tool-button" onClick={undo} disabled={!undoStack.length} aria-label="Undo"><Icon name="undo"/><span>Undo</span></button>
@@ -1010,15 +1012,15 @@ export function HandwritingApp() {
           </>}
           <div className="result-actions">
             <button onClick={tryAgain}>Try again</button>
-            {detailedFeedback && (result.status !== "correct" || result.strokeAssessments.some((assessment) => !assessment.passed)) && (
-              <button className="trace-practice-button" onClick={startTracePractice}>Practise over the grid model</button>
+            {(result.status !== "correct" && result.status !== "tip") && (
+              <button className="trace-practice-button" onClick={startTracePractice}>Practise on the template</button>
             )}
             <button onClick={() => { setTraceTarget(null); setTarget(null); resetDrawing(); }}>Choose another word</button>
           </div>
         </section>
       )}
 
-      {diagnosticsEnabled && target && detailedFeedback && (
+      {diagnosticsEnabled && target && (
         <details className="debug-panel">
           <summary>Developer diagnostics</summary>
           <p>Includes the raw stroke attempt, recognition candidates, segmentation, and shape assessment. It never includes service credentials.</p>
@@ -1043,11 +1045,13 @@ export function HandwritingApp() {
               regions: result.regions,
               shapeAssessments: result.shapeAssessments,
               strokeAssessments: result.strokeAssessments,
+              geminiPassed: result.geminiPassed,
+              geminiAssessments: result.geminiAssessments,
             } : null,
           }, null, 2)}</pre>
         </details>
       )}
-      <footer>Local WASM uses hanzi_lookup (LGPL). Whole-character geometry and optional stroke tips use Hanzi Writer-inspired methods. Character data is Make Me a Hanzi-derived (Arphic Public License). MyScript sends stroke data to the configured MyScript service when selected.</footer>
+      <footer>Local WASM uses hanzi_lookup (LGPL). Character data is Make Me a Hanzi-derived (Arphic Public License). MyScript receives stroke data when selected; Gemini receives normalized ink and grounded component evidence when an answer is marked.</footer>
     </main>
   );
 }

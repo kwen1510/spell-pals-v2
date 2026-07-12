@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { CharacterTemplate } from "./character-template";
 import { extractVisualPrimitives, type PrimitivePoint } from "./primitive-analysis";
 
-export const GEMINI_SHAPE_MODEL = "gemini-3.1-pro-preview";
+export const GEMINI_SHAPE_MODEL = "gemini-3-flash-preview";
 
 export const geminiShapeAssessmentSchema = z.object({
   verdict: z.enum(["correct_shape", "incorrect_shape", "uncertain"]),
@@ -217,7 +217,7 @@ export async function assessShapeWithGemini(args: {
       { type: "image", data: renderShapePng(args.template.modelStrokes.map((stroke) => stroke.median)).toString("base64"), mime_type: "image/png" },
     ],
     response_format: { type: "text", mime_type: "application/json", schema: RESPONSE_SCHEMA },
-    generation_config: { temperature: 0 },
+    generation_config: { temperature: 0, thinking_level: "minimal" },
   }, { signal: args.signal });
   if (!response.output_text) throw new Error("Gemini returned no structured assessment.");
   return geminiShapeAssessmentSchema.parse(JSON.parse(response.output_text));

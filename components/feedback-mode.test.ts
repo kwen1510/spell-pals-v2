@@ -34,6 +34,6 @@ describe("feedback mode", () => {
     expect(resultHeading("unrecognized", true)).toBe("Character not recognized");
     expect(resultHeading("tip", true)).toContain("Correct");
     expect(simpleResultMessage("shape")).not.toContain("guess");
-    expect(simpleResultMessage("correct")).toContain("passed");
+    expect(simpleResultMessage("correct")).toContain("correct");
   });
 });
