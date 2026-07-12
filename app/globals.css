@@ -103,6 +103,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 4px s
 .notice.error { border: 2px solid #f1b3a6; background: #fff0eb; color: #9b3d32; }
 .result-card { margin-top: 18px; padding: clamp(20px, 4vw, 34px); scroll-margin-top: max(16px, env(safe-area-inset-top)); }
 .result-card.correct { border-color: #83d7ad; background: #f4fff8; }
+.result-card.tip { border-color: #83d7ad; background: #f8fff8; }
 .result-card.shape { border-color: #e3ba68; background: #fffcf2; }
 .result-card.unrecognized { border-color: #efad9f; background: #fff9f6; }
 .result-card.incomplete { border-color: #e3ba68; background: #fffcf2; }
@@ -136,16 +137,17 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 4px s
 .shape-note, .order-note, .repair-note { margin: 8px 0 0; padding: 8px 10px; border-radius: 9px; font-size: .76rem; font-weight: 750; line-height: 1.4; }
 .shape-note, .repair-note { background: #edf6f2; color: #536a61; }
 .order-note { background: #fff3ce; color: #76591c; }
-.component-breakdown, .stroke-tips { margin-top: 10px; padding: 10px; border-radius: 10px; }
+.component-breakdown, .stroke-tips, .shape-tips { margin-top: 10px; padding: 10px; border-radius: 10px; }
 .component-breakdown { background: #f3f8f5; }
-.component-breakdown > p, .stroke-tips > p { margin: 0 0 7px; color: #536a61; font-size: .72rem; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; }
+.component-breakdown > p, .stroke-tips > p, .shape-tips > p { margin: 0 0 7px; color: #536a61; font-size: .72rem; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; }
 .component-breakdown > div { display: flex; flex-wrap: wrap; gap: 6px; }
 .component-breakdown span { padding: 5px 8px; border: 1px solid #c9dfd6; border-radius: 999px; background: white; color: #4f685f; font-size: .72rem; }
 .component-breakdown span.passed { border-color: #9dd7bd; color: #176c56; }
 .component-breakdown span.failed { border-color: #efad9f; background: #fff1ed; color: #963d31; }
 .component-breakdown b { font-family: "Kaiti SC", STKaiti, serif; font-size: 1rem; }
 .stroke-tips { background: #fff3ce; color: #76591c; }
-.stroke-tips ul { margin: 0; padding-left: 18px; font-size: .76rem; font-weight: 750; line-height: 1.45; }
+.shape-tips { background: #f3f8f5; color: #536a61; }
+.stroke-tips ul, .shape-tips ul { margin: 0; padding-left: 18px; font-size: .76rem; font-weight: 750; line-height: 1.45; }
 .shape-preview { display: grid; grid-template-columns: 112px minmax(0, 1fr); align-items: center; gap: 10px; margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #deebe5; }
 .shape-preview svg { width: 112px; aspect-ratio: 1; border: 1px solid #dbe9e3; border-radius: 10px; background: #fffefb; }
 .shape-preview polyline { fill: none; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }

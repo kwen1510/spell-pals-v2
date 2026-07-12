@@ -9,9 +9,10 @@ export interface RankedGrade {
 export interface ShapeGradeLike {
   passed: boolean;
   blank?: boolean;
+  decision?: "pass" | "pass-with-tip" | "fail";
 }
 
-export type MarkingStatus = "correct" | "shape" | "unrecognized" | "incomplete";
+export type MarkingStatus = "correct" | "tip" | "shape" | "unrecognized" | "incomplete";
 
 export function gradeRankedCandidates(
   expected: string,
@@ -49,9 +50,11 @@ export function markingStatus(
 ): MarkingStatus {
   if (shapeAssessments.some((assessment) => assessment.blank)) return "incomplete";
   if (!recognitionCorrect) return "unrecognized";
-  return expectedCharacterCount > 0
+  const allShapesPass = expectedCharacterCount > 0
     && shapeAssessments.length === expectedCharacterCount
-    && shapeAssessments.every((assessment) => assessment.passed)
-    ? "correct"
-    : "shape";
+    && shapeAssessments.every((assessment) => assessment.passed);
+  if (!allShapesPass) return "shape";
+  return shapeAssessments.some((assessment) => assessment.decision === "pass-with-tip")
+    ? "tip"
+    : "correct";
 }

@@ -21,7 +21,9 @@ describe("feedback mode", () => {
     expect(resultHeading("unrecognized", false)).toBe("Try again");
     expect(resultHeading("incomplete", false)).toBe("Finish your answer");
     expect(resultHeading("correct", false)).toBe("Correct!");
+    expect(resultHeading("tip", false)).toBe("Correct!");
     expect(compactResultTone("correct")).toBe("pass");
+    expect(compactResultTone("tip")).toBe("pass");
     expect(compactResultTone("shape")).toBe("fail");
     expect(compactResultTone("unrecognized")).toBe("fail");
     expect(compactResultTone("incomplete")).toBe("fail");
@@ -30,6 +32,7 @@ describe("feedback mode", () => {
   it("retains the existing instructional headings when feedback is on", () => {
     expect(resultHeading("shape", true)).toContain("shape needs practice");
     expect(resultHeading("unrecognized", true)).toBe("Character not recognized");
+    expect(resultHeading("tip", true)).toContain("Correct");
     expect(simpleResultMessage("shape")).not.toContain("guess");
     expect(simpleResultMessage("correct")).toContain("passed");
   });

@@ -1,10 +1,12 @@
-import { getCharacterShapeReference, type ShapePoint } from "./character-shape-references";
-import { getCharacterComponents, type CharacterComponentPosition } from "./character-components";
+import type { ShapePoint } from "./character-shape-references";
+import type { CharacterComponentPosition } from "./character-components";
 import { getShapeCompetitors, type ShapeCompetitorSource } from "./shape-competitors";
 import { dedupePath, pathLength } from "./shape-geometry";
 import type { CharacterBounds } from "./shape-validator";
 import type { Stroke } from "./types";
 import { normalizeVisibleShape } from "./visible-shape-normalization";
+import { STRUCTURAL_GRADING_CONFIG } from "./structural-grading-config";
+import { getCharacterTemplate } from "./character-template";
 
 /**
  * A light-weight, pen-lift-independent character check.
@@ -15,36 +17,36 @@ import { normalizeVisibleShape } from "./visible-shape-normalization";
  * Raw square-relative geometry is retained separately for coaching feedback.
  */
 
-export const WHOLE_SHAPE_MASK_SIZE = 64;
-export const WHOLE_SHAPE_MATCH_DISTANCE_RATIO = 0.055;
-export const WHOLE_SHAPE_MIN_EXPECTED_COVERAGE = 0.78;
-export const WHOLE_SHAPE_MIN_STUDENT_PRECISION = 0.74;
-export const WHOLE_SHAPE_MIN_MAJOR_CELL_COVERAGE = 0.44;
-export const WHOLE_SHAPE_MAJOR_CELL_SHARE = 0.075;
-export const WHOLE_SHAPE_BLANK_LENGTH_RATIO = 0.025;
-export const WHOLE_SHAPE_MIN_COMPONENT_COVERAGE = 0.55;
-export const WHOLE_SHAPE_MAX_COMPONENT_CENTROID_DELTA = 0.11;
-export const WHOLE_SHAPE_COMPONENT_ASSIGN_DISTANCE_RATIO = 0.1;
-export const WHOLE_SHAPE_MIN_COMPONENT_PRECISION = 0.62;
-export const WHOLE_SHAPE_MIN_COMPONENT_SIZE_RATIO = 0.5;
-export const WHOLE_SHAPE_MAX_COMPONENT_SIZE_RATIO = 1.75;
-export const WHOLE_SHAPE_MAX_UNASSIGNED_INK_SHARE = 0.18;
-export const WHOLE_SHAPE_MIN_DIRECTIONAL_EXPECTED_COVERAGE = 0.68;
-export const WHOLE_SHAPE_MIN_DIRECTIONAL_STUDENT_PRECISION = 0.75;
-export const WHOLE_SHAPE_DIRECTION_TOLERANCE_DEGREES = 50;
-export const WHOLE_SHAPE_MIN_COMPETITOR_MARGIN = 0.012;
-export const WHOLE_SHAPE_MODEL_STROKE_DISTANCE_RATIO = 0.05;
-export const WHOLE_SHAPE_MODEL_ENDPOINT_DISTANCE_RATIO = 0.05;
-export const WHOLE_SHAPE_MODEL_STROKE_DIRECTION_TOLERANCE_DEGREES = 45;
-export const WHOLE_SHAPE_MIN_MODEL_STROKE_COVERAGE = 0.62;
-export const WHOLE_SHAPE_MIN_LONG_MODEL_STROKE_COVERAGE = 0.74;
-export const WHOLE_SHAPE_LONG_MODEL_STROKE_LENGTH = 220;
+export const WHOLE_SHAPE_MASK_SIZE = STRUCTURAL_GRADING_CONFIG.matching.maskSize;
+export const WHOLE_SHAPE_MATCH_DISTANCE_RATIO = STRUCTURAL_GRADING_CONFIG.matching.broadDistanceRatio;
+export const WHOLE_SHAPE_MIN_EXPECTED_COVERAGE = STRUCTURAL_GRADING_CONFIG.advisory.expectedCoverageMinimum;
+export const WHOLE_SHAPE_MIN_STUDENT_PRECISION = STRUCTURAL_GRADING_CONFIG.advisory.studentPrecisionMinimum;
+export const WHOLE_SHAPE_MIN_MAJOR_CELL_COVERAGE = STRUCTURAL_GRADING_CONFIG.advisory.majorCellCoverageMinimum;
+export const WHOLE_SHAPE_MAJOR_CELL_SHARE = STRUCTURAL_GRADING_CONFIG.advisory.majorCellInkShare;
+export const WHOLE_SHAPE_BLANK_LENGTH_RATIO = STRUCTURAL_GRADING_CONFIG.hard.blankLengthRatio;
+export const WHOLE_SHAPE_MIN_COMPONENT_COVERAGE = STRUCTURAL_GRADING_CONFIG.advisory.componentCoverageMinimum;
+export const WHOLE_SHAPE_MAX_COMPONENT_CENTROID_DELTA = STRUCTURAL_GRADING_CONFIG.advisory.componentCentroidDeltaMaximum;
+export const WHOLE_SHAPE_COMPONENT_ASSIGN_DISTANCE_RATIO = STRUCTURAL_GRADING_CONFIG.matching.componentAssignmentDistanceRatio;
+export const WHOLE_SHAPE_MIN_COMPONENT_PRECISION = STRUCTURAL_GRADING_CONFIG.advisory.componentPrecisionMinimum;
+export const WHOLE_SHAPE_MIN_COMPONENT_SIZE_RATIO = STRUCTURAL_GRADING_CONFIG.advisory.componentSizeRatioMinimum;
+export const WHOLE_SHAPE_MAX_COMPONENT_SIZE_RATIO = STRUCTURAL_GRADING_CONFIG.advisory.componentSizeRatioMaximum;
+export const WHOLE_SHAPE_MAX_UNASSIGNED_INK_SHARE = STRUCTURAL_GRADING_CONFIG.advisory.unassignedInkShareMaximum;
+export const WHOLE_SHAPE_MIN_DIRECTIONAL_EXPECTED_COVERAGE = STRUCTURAL_GRADING_CONFIG.advisory.directionalExpectedCoverageMinimum;
+export const WHOLE_SHAPE_MIN_DIRECTIONAL_STUDENT_PRECISION = STRUCTURAL_GRADING_CONFIG.advisory.directionalStudentPrecisionMinimum;
+export const WHOLE_SHAPE_DIRECTION_TOLERANCE_DEGREES = STRUCTURAL_GRADING_CONFIG.matching.directionToleranceDegrees;
+export const WHOLE_SHAPE_MIN_COMPETITOR_MARGIN = -STRUCTURAL_GRADING_CONFIG.hard.competitorBetterBy;
+export const WHOLE_SHAPE_MODEL_STROKE_DISTANCE_RATIO = STRUCTURAL_GRADING_CONFIG.matching.modelPathDistanceRatio;
+export const WHOLE_SHAPE_MODEL_ENDPOINT_DISTANCE_RATIO = STRUCTURAL_GRADING_CONFIG.matching.modelEndpointDistanceRatio;
+export const WHOLE_SHAPE_MODEL_STROKE_DIRECTION_TOLERANCE_DEGREES = STRUCTURAL_GRADING_CONFIG.matching.modelPathDirectionToleranceDegrees;
+export const WHOLE_SHAPE_MIN_MODEL_STROKE_COVERAGE = STRUCTURAL_GRADING_CONFIG.hard.shortPathCoverageMinimum;
+export const WHOLE_SHAPE_MIN_LONG_MODEL_STROKE_COVERAGE = STRUCTURAL_GRADING_CONFIG.hard.longPathCoverageMinimum;
+export const WHOLE_SHAPE_LONG_MODEL_STROKE_LENGTH = STRUCTURAL_GRADING_CONFIG.hard.longPathLength;
 
-const WHOLE_SHAPE_HARD_COMPONENT_COVERAGE = 0.45;
-const WHOLE_SHAPE_HARD_COMPONENT_PRECISION = 0.5;
-const WHOLE_SHAPE_HARD_COMPONENT_CENTROID_DELTA = 0.17;
-const WHOLE_SHAPE_HARD_COMPONENT_MIN_SIZE_RATIO = 0.36;
-const WHOLE_SHAPE_HARD_COMPONENT_MAX_SIZE_RATIO = 2.25;
+const WHOLE_SHAPE_HARD_COMPONENT_COVERAGE = STRUCTURAL_GRADING_CONFIG.hard.componentCoverageMinimum;
+const WHOLE_SHAPE_HARD_COMPONENT_PRECISION = STRUCTURAL_GRADING_CONFIG.hard.componentPrecisionMinimum;
+const WHOLE_SHAPE_HARD_COMPONENT_CENTROID_DELTA = STRUCTURAL_GRADING_CONFIG.hard.componentCentroidDeltaMaximum;
+const WHOLE_SHAPE_HARD_COMPONENT_MIN_SIZE_RATIO = STRUCTURAL_GRADING_CONFIG.hard.componentSizeRatioMinimum;
+const WHOLE_SHAPE_HARD_COMPONENT_MAX_SIZE_RATIO = STRUCTURAL_GRADING_CONFIG.hard.componentSizeRatioMaximum;
 
 export type WholeShapeQuadrant = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
@@ -72,6 +74,22 @@ export type WholeShapeIssueCode =
   | "too-low"
   | "too-small"
   | "too-large";
+
+export type WholeShapeDecision = "pass" | "pass-with-tip" | "fail";
+
+export type WholeShapeFeedbackCode =
+  | "BLANK_CHARACTER"
+  | "INVALID_CAPTURE"
+  | "MISSING_REFERENCE"
+  | "MISSING_REQUIRED_PATH"
+  | "MISSING_MAJOR_COMPONENT"
+  | "MAJOR_EXTRA_LINE"
+  | "STRONGER_CONFUSABLE_MATCH"
+  | "REGION_SHAPE_DIFFERS"
+  | "COMPONENT_PROPORTION_DIFFERS"
+  | "MINOR_EXTRA_INK"
+  | "CLOSE_CONFUSABLE_SHAPE"
+  | "PLACEMENT_OR_SIZE_TIP";
 
 export type WholeShapeIssueSeverity = "warning" | "error";
 
@@ -148,6 +166,10 @@ export interface WholeShapeMetrics {
   outsideInkRatio: number;
   /** Aligned in-square ink too far from every official component. */
   unassignedInkShare: number;
+  /** Captured vector samples which are not near any model path. */
+  unmatchedInkShare: number;
+  /** Longest contiguous unmatched run as a share of all captured samples. */
+  longestUnmatchedRunShare: number;
 }
 
 export interface WholeShapeCompetitorEvidence {
@@ -160,6 +182,8 @@ export interface WholeShapeCompetitorEvidence {
 
 export interface WholeShapeAssessment {
   passed: boolean;
+  decision: WholeShapeDecision;
+  feedbackCodes: WholeShapeFeedbackCode[];
   blank: boolean;
   rawStrokeCount: number;
   expectedStrokeCount: number;
@@ -253,7 +277,18 @@ const CELLS: readonly WholeShapeCell[] = [
 // Only a bounded rotation search remains for normal slant in student writing.
 const TRANSLATIONS = [0] as const;
 const SCALES = [0.94, 0.97, 1, 1.03, 1.06] as const;
-const COMPARISON_ROTATIONS = [-12, -10, -8, -6, -4, -2, 0, 2, 4, 6, 8, 10, 12] as const;
+const COMPARISON_ROTATIONS = Array.from(
+  {
+    length: Math.floor(
+      STRUCTURAL_GRADING_CONFIG.normalization.maximumRotationDegrees * 2
+      / STRUCTURAL_GRADING_CONFIG.normalization.rotationStepDegrees,
+    ) + 1,
+  },
+  (_, index) => (
+    -STRUCTURAL_GRADING_CONFIG.normalization.maximumRotationDegrees
+    + index * STRUCTURAL_GRADING_CONFIG.normalization.rotationStepDegrees
+  ),
+);
 const EMPTY_METRICS: WholeShapeMetrics = {
   expectedCoverage: 0,
   studentPrecision: 0,
@@ -272,6 +307,8 @@ const EMPTY_METRICS: WholeShapeMetrics = {
   heightRatio: 0,
   outsideInkRatio: 0,
   unassignedInkShare: 0,
+  unmatchedInkShare: 0,
+  longestUnmatchedRunShare: 0,
 };
 const IDENTITY_TRANSFORM: WholeShapeTransform = {
   translateX: 0,
@@ -348,6 +385,55 @@ function orientedSamples(
     }
   }
   return samples;
+}
+
+interface UnmatchedInkEvidence {
+  unmatchedInkShare: number;
+  longestUnmatchedRunShare: number;
+}
+
+/**
+ * Detect a real extra line from vector continuity instead of broad raster
+ * precision. Small hooks, jitter, and style differences may create scattered
+ * unmatched samples; only a long contiguous unsupported run is correctness
+ * evidence.
+ */
+function unmatchedStudentInkEvidence(
+  studentPaths: readonly ShapePoint[][],
+  transform: WholeShapeTransform,
+  referencePaths: readonly ShapePoint[][],
+): UnmatchedInkEvidence {
+  const referenceSamples = orientedSamples(referencePaths);
+  const maximumDistance = STRUCTURAL_GRADING_CONFIG.hard.unmatchedSampleDistanceRatio * 1024;
+  const maximumDistanceSquared = maximumDistance ** 2;
+  const perPath = studentPaths.map((path) => orientedSamples([path], transform));
+  const totalSamples = perPath.reduce((sum, samples) => sum + samples.length, 0);
+  if (!totalSamples || !referenceSamples.length) {
+    return { unmatchedInkShare: totalSamples ? 1 : 0, longestUnmatchedRunShare: totalSamples ? 1 : 0 };
+  }
+  let unmatchedSamples = 0;
+  let longestRun = 0;
+  for (const samples of perPath) {
+    let currentRun = 0;
+    for (const sample of samples) {
+      const matched = referenceSamples.some((reference) => {
+        const deltaX = sample.x - reference.x;
+        const deltaY = sample.y - reference.y;
+        return deltaX ** 2 + deltaY ** 2 <= maximumDistanceSquared;
+      });
+      if (matched) {
+        currentRun = 0;
+      } else {
+        unmatchedSamples += 1;
+        currentRun += 1;
+        longestRun = Math.max(longestRun, currentRun);
+      }
+    }
+  }
+  return {
+    unmatchedInkShare: unmatchedSamples / totalSamples,
+    longestUnmatchedRunShare: longestRun / totalSamples,
+  };
 }
 
 /**
@@ -671,10 +757,10 @@ function maskGeometry(mask: Uint8Array): MaskGeometry {
   let count = 0;
   let sumX = 0;
   let sumY = 0;
-  let minimumX = size;
-  let maximumX = -1;
-  let minimumY = size;
-  let maximumY = -1;
+  let minimumX: number = size;
+  let maximumX: number = -1;
+  let minimumY: number = size;
+  let maximumY: number = -1;
   mask.forEach((value, index) => {
     if (!value) return;
     const x = index % size;
@@ -767,10 +853,10 @@ function missingCellIssues(cells: WholeShapeRegionAssessment<WholeShapeCell>[]):
     .slice(0, 2)
     .map((cell) => ({
       code: "missing-major-shape" as const,
-      severity: "error" as const,
+      severity: "warning" as const,
       cell: cell.region,
       quadrant: quadrantForCell(cell.region),
-      message: `The ${cell.region.replace("-", " ")} part is missing or too far from the expected shape.`,
+      message: `The strokes in the ${cell.region.replace("-", " ")} differ from the model; keep the main parts a little closer to the guide.`,
     }));
 }
 
@@ -816,6 +902,12 @@ function baseAssessment(
 ): WholeShapeAssessment {
   return {
     passed: false,
+    decision: "fail",
+    feedbackCodes: [issue.code === "blank"
+      ? "BLANK_CHARACTER"
+      : issue.code === "missing-reference"
+        ? "MISSING_REFERENCE"
+        : "INVALID_CAPTURE"],
     blank,
     rawStrokeCount,
     expectedStrokeCount,
@@ -840,8 +932,11 @@ export function assessWholeCharacterShape(
   expected: string,
   bounds: CharacterBounds,
 ): WholeShapeAssessment {
-  const referencePaths = getCharacterShapeReference(expected);
-  if (!referencePaths) {
+  const template = getCharacterTemplate(expected);
+  const referencePaths = template?.modelStrokes.map((stroke) => (
+    stroke.median.map((point) => ({ x: point.x * 1024, y: point.y * 1024 }))
+  )) ?? null;
+  if (!template || !referencePaths) {
     return baseAssessment(strokes.length, 0, [], [], {
       code: "missing-reference",
       severity: "error",
@@ -918,6 +1013,16 @@ export function assessWholeCharacterShape(
   const modelStrokeCompletenessPassed = modelStrokeCoverages.every((coverage, index) => (
     coverage >= modelStrokeRequiredCoverages[index]
   ));
+  // The ordinary coverage thresholds are useful coaching signals. Correctness
+  // only fails when a complete visible path is clearly absent; this leaves
+  // room for non-calligraphic proportions and alternate joins.
+  const clearlyMissingModelPath = modelStrokeCoverages.some((coverage, index) => {
+    if (coverage >= modelStrokeRequiredCoverages[index]) return false;
+    const evidence = modelPathSupport[index];
+    return evidence.longestGap >= 0.24
+      || evidence.supportRatio <= 0.72
+      || evidence.endpointCoverage < 0.5;
+  });
   const minimumModelStrokeCoverage = modelStrokeCoverages.length ? Math.min(...modelStrokeCoverages) : 0;
   const distanceToExpected = distanceField(expectedRaster.mask);
   const expectedGeometry = maskGeometry(rawExpectedRaster.mask);
@@ -941,7 +1046,13 @@ export function assessWholeCharacterShape(
     match.distanceToStudent,
   );
   const studentInkTotal = match.raster.inkCount;
-  const componentSources = getCharacterComponents(expected).map((definition) => {
+  const componentSources = template.components.map((templateComponent) => {
+    const definition = {
+      id: templateComponent.id,
+      label: templateComponent.label,
+      position: templateComponent.position,
+      strokeIndices: templateComponent.expectedStrokeIndexes,
+    };
     const componentPaths = definition.strokeIndices
       .map((strokeIndex) => structuralReferencePaths[strokeIndex])
       .filter((path): path is ShapePoint[] => Boolean(path));
@@ -1023,11 +1134,21 @@ export function assessWholeCharacterShape(
     };
   });
   const unassignedInkShare = studentInkTotal ? unassignedStudentInk / studentInkTotal : 0;
+  const unmatchedInk = unmatchedStudentInkEvidence(
+    structuralStudentPaths,
+    match.transform,
+    structuralReferencePaths,
+  );
+  const majorExtraLine = unmatchedInk.unmatchedInkShare
+      >= STRUCTURAL_GRADING_CONFIG.hard.majorUnmatchedLengthRatio
+    && unmatchedInk.longestUnmatchedRunShare
+      >= STRUCTURAL_GRADING_CONFIG.hard.majorUnmatchedRunRatio;
   const issues = [
     ...placementIssues(expectedGeometry, studentGeometry),
     ...missingCellIssues(cells),
   ];
 
+  let hasSevereComponentFailure = false;
   for (const component of components.filter((component) => !component.passed)) {
     const severeComponentFailure = !component.hasStudentSupport
       || component.expectedCoverage < WHOLE_SHAPE_HARD_COMPONENT_COVERAGE
@@ -1038,6 +1159,7 @@ export function assessWholeCharacterShape(
       || component.widthRatio > WHOLE_SHAPE_HARD_COMPONENT_MAX_SIZE_RATIO
       || component.heightRatio < WHOLE_SHAPE_HARD_COMPONENT_MIN_SIZE_RATIO
       || component.heightRatio > WHOLE_SHAPE_HARD_COMPONENT_MAX_SIZE_RATIO;
+    hasSevereComponentFailure ||= severeComponentFailure;
     const direction = component.hasStudentSupport && Math.abs(component.centroidDeltaY) >= Math.abs(component.centroidDeltaX)
       ? component.centroidDeltaY > WHOLE_SHAPE_MAX_COMPONENT_CENTROID_DELTA
         ? "too low"
@@ -1079,13 +1201,16 @@ export function assessWholeCharacterShape(
   if (
     (match.expectedCoverage < WHOLE_SHAPE_MIN_EXPECTED_COVERAGE
       || directionalExpectedCoverage < WHOLE_SHAPE_MIN_DIRECTIONAL_EXPECTED_COVERAGE
-      || !modelStrokeCompletenessPassed)
-    && !issues.some((issue) => issue.code === "missing-major-shape")
+      || !modelStrokeCompletenessPassed
+      || clearlyMissingModelPath)
+    && !issues.some((issue) => issue.code === "missing-major-shape" && issue.severity === "error")
   ) {
     issues.push({
       code: "missing-major-shape",
-      severity: "error",
-      message: "A major part of the expected character is missing or misplaced.",
+      severity: clearlyMissingModelPath ? "error" : "warning",
+      message: clearlyMissingModelPath
+        ? "A required visible line or curve is missing from the character."
+        : "Some strokes differ from the model, but the main character structure is present.",
     });
   }
   const extraCell = [...cells]
@@ -1097,20 +1222,21 @@ export function assessWholeCharacterShape(
     .sort((left, right) =>
       (right.studentShare - right.expectedShare) - (left.studentShare - left.expectedShare),
     )[0];
-  if (
-    match.studentPrecision < WHOLE_SHAPE_MIN_STUDENT_PRECISION
+  const broadExtraInk = match.studentPrecision < WHOLE_SHAPE_MIN_STUDENT_PRECISION
     || directionalStudentPrecision < WHOLE_SHAPE_MIN_DIRECTIONAL_STUDENT_PRECISION
     || unassignedInkShare > WHOLE_SHAPE_MAX_UNASSIGNED_INK_SHARE
-    || extraCell
-  ) {
+    || Boolean(extraCell);
+  if (majorExtraLine || broadExtraInk) {
     issues.push({
       code: "extra-ink",
-      severity: "error",
+      severity: majorExtraLine ? "error" : "warning",
       cell: extraCell?.region,
       quadrant: extraCell ? quadrantForCell(extraCell.region) : undefined,
-      message: extraCell
-        ? `There is extra ink in the ${extraCell.region.replace("-", " ")} part of the square.`
-        : "There is too much ink away from the expected character shape.",
+      message: majorExtraLine
+        ? "There is a substantial extra line that is not part of this character."
+        : extraCell
+          ? `A little ink in the ${extraCell.region.replace("-", " ")} differs from the model.`
+          : "Some ink sits away from the model; check the shape, but the main structure is still readable.",
     });
   }
   if (closestCompetitor && closestCompetitor.margin < WHOLE_SHAPE_MIN_COMPETITOR_MARGIN) {
@@ -1119,10 +1245,24 @@ export function assessWholeCharacterShape(
       severity: "error",
       message: `The overall shape is too close to ${closestCompetitor.character}; check the character's main parts.`,
     });
+  } else if (
+    closestCompetitor
+    && closestCompetitor.margin < STRUCTURAL_GRADING_CONFIG.advisory.competitorTipMargin
+  ) {
+    issues.push({
+      code: "closer-to-other-character",
+      severity: "warning",
+      message: `A few strokes also resemble ${closestCompetitor.character}; keep the distinguishing part clear.`,
+    });
   }
 
   const uniqueIssues = issues.filter((issue, index) =>
-    issues.findIndex((candidate) => candidate.code === issue.code && candidate.cell === issue.cell) === index,
+    issues.findIndex((candidate) => (
+      candidate.code === issue.code
+      && candidate.severity === issue.severity
+      && candidate.cell === issue.cell
+      && candidate.message === issue.message
+    )) === index,
   );
   const metrics: WholeShapeMetrics = {
     expectedCoverage: match.expectedCoverage,
@@ -1142,14 +1282,37 @@ export function assessWholeCharacterShape(
     heightRatio,
     outsideInkRatio: rawStudentRaster.outsideInkRatio,
     unassignedInkShare,
+    unmatchedInkShare: unmatchedInk.unmatchedInkShare,
+    longestUnmatchedRunShare: unmatchedInk.longestUnmatchedRunShare,
   };
-  const hardMetricFailure = match.expectedCoverage < WHOLE_SHAPE_MIN_EXPECTED_COVERAGE
-    || match.studentPrecision < WHOLE_SHAPE_MIN_STUDENT_PRECISION
-    || directionalExpectedCoverage < WHOLE_SHAPE_MIN_DIRECTIONAL_EXPECTED_COVERAGE
-    || directionalStudentPrecision < WHOLE_SHAPE_MIN_DIRECTIONAL_STUDENT_PRECISION
-    || !modelStrokeCompletenessPassed;
+  const hardMetricFailure = clearlyMissingModelPath || majorExtraLine;
+  const passed = !hardMetricFailure && !uniqueIssues.some((issue) => issue.severity === "error");
+  const decision: WholeShapeDecision = !passed
+    ? "fail"
+    : uniqueIssues.some((issue) => issue.severity === "warning") || !modelStrokeCompletenessPassed
+      ? "pass-with-tip"
+      : "pass";
+  const feedbackCodes = Array.from(new Set<WholeShapeFeedbackCode>([
+    ...(clearlyMissingModelPath ? ["MISSING_REQUIRED_PATH" as const] : []),
+    ...(hasSevereComponentFailure
+      ? ["MISSING_MAJOR_COMPONENT" as const] : []),
+    ...(majorExtraLine ? ["MAJOR_EXTRA_LINE" as const] : []),
+    ...(uniqueIssues.some((issue) => issue.severity === "error" && issue.code === "closer-to-other-character")
+      ? ["STRONGER_CONFUSABLE_MATCH" as const] : []),
+    ...(uniqueIssues.some((issue) => issue.severity === "warning" && issue.code === "missing-major-shape")
+      ? ["REGION_SHAPE_DIFFERS" as const] : []),
+    ...(components.some((component) => !component.passed)
+      ? ["COMPONENT_PROPORTION_DIFFERS" as const] : []),
+    ...(broadExtraInk && !majorExtraLine ? ["MINOR_EXTRA_INK" as const] : []),
+    ...(uniqueIssues.some((issue) => issue.severity === "warning" && issue.code === "closer-to-other-character")
+      ? ["CLOSE_CONFUSABLE_SHAPE" as const] : []),
+    ...(uniqueIssues.some((issue) => issue.severity === "warning" && issue.code.startsWith("too-"))
+      ? ["PLACEMENT_OR_SIZE_TIP" as const] : []),
+  ]));
   return {
-    passed: !hardMetricFailure && !uniqueIssues.some((issue) => issue.severity === "error"),
+    passed,
+    decision,
+    feedbackCodes,
     blank: false,
     rawStrokeCount: strokes.length,
     expectedStrokeCount: referencePaths.length,

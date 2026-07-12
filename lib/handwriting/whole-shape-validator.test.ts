@@ -291,6 +291,8 @@ describe("whole-character quadrant and component validation", () => {
     const slightlyRight = transformPaths(reference, (point) => ({ ...point, x: point.x + 78 }));
     const warning = assessWholeCharacterShape(strokesFromPaths(slightlyRight), "写", BOUNDS);
     expect(warning.passed).toBe(true);
+    expect(warning.decision).toBe("pass-with-tip");
+    expect(warning.feedbackCodes).toContain("PLACEMENT_OR_SIZE_TIP");
     expect(warning.issues).toContainEqual(expect.objectContaining({ code: "too-far-right", severity: "warning" }));
 
     const farRight = transformPaths(reference, (point) => ({ ...point, x: point.x + 170 }));

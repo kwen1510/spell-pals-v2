@@ -142,10 +142,10 @@ function ShapePreview({ assessment, expected }: { assessment: ShapeAssessment; e
 
   const problemQuadrants = new Set(
     [
-      ...assessment.issues.map((issue) => issue.quadrant),
-      ...assessment.quadrants
+      ...assessment.issues.filter((issue) => issue.severity === "error").map((issue) => issue.quadrant),
+      ...(assessment.passed ? [] : assessment.quadrants
         .filter((quadrant) => quadrant.major && quadrant.expectedCoverage < 0.55)
-        .map((quadrant) => quadrant.region),
+        .map((quadrant) => quadrant.region)),
     ].filter((value): value is NonNullable<typeof value> => Boolean(value)),
   );
   const quadrantRects = {
@@ -910,7 +910,7 @@ export function HandwritingApp() {
           aria-live="polite"
         >
           <div className="result-heading">
-            <span>{result.status === "correct" ? "✓" : result.status === "incomplete" ? "…" : detailedFeedback && result.status === "shape" ? "!" : "×"}</span>
+            <span>{result.status === "correct" || result.status === "tip" ? "✓" : result.status === "incomplete" ? "…" : detailedFeedback && result.status === "shape" ? "!" : "×"}</span>
             <div>
               <p className="eyebrow">Your result</p>
               <h2 ref={resultHeadingRef} tabIndex={-1}>{resultHeading(result.status, detailedFeedback)}</h2>
@@ -927,8 +927,15 @@ export function HandwritingApp() {
               const assessment = result.shapeAssessments[index];
               const strokeAssessment = result.strokeAssessments[index];
               const passed = recognitionMatched && assessment?.passed;
-              const issues = Array.from(new Set((assessment?.issues ?? []).map((issue) => issue.message)));
-              if (assessment && !assessment.passed && !assessment.blank && issues.length === 0) issues.push("A major part of the character does not match closely enough yet.");
+              const errorIssues = Array.from(new Set((assessment?.issues ?? [])
+                .filter((issue) => issue.severity === "error")
+                .map((issue) => issue.message)));
+              const shapeTips = Array.from(new Set((assessment?.issues ?? [])
+                .filter((issue) => issue.severity === "warning")
+                .map((issue) => issue.message)));
+              if (assessment && !assessment.passed && !assessment.blank && errorIssues.length === 0) {
+                errorIssues.push("A required part of the character is missing or substantially different.");
+              }
               const practiceTips = strokePracticeTips(strokeAssessment, assessment?.passed ?? false);
               return (
                 <article className={passed ? "match" : "mismatch"} key={index}>
@@ -942,9 +949,15 @@ export function HandwritingApp() {
                     </strong>
                   </div>
                   <p className={`shape-status ${assessment?.passed ? "passed" : "failed"}`}>
-                    {assessment?.blank ? "Not written" : assessment?.passed ? "Overall shape matches" : "Shape needs practice"}
+                    {assessment?.blank
+                      ? "Not written"
+                      : assessment?.decision === "pass-with-tip"
+                        ? "Correct shape · one practice tip"
+                        : assessment?.passed
+                          ? "Overall shape matches"
+                          : "Shape needs practice"}
                   </p>
-                  {issues.length > 0 && <ul className="shape-issues">{issues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}
+                  {errorIssues.length > 0 && <ul className="shape-issues">{errorIssues.map((issue) => <li key={issue}>{issue}</li>)}</ul>}
                   {assessment && assessment.components.length > 0 && (
                     <div className="component-breakdown" aria-label={`Parts of ${expected}`}>
                       <p>Character parts</p>
@@ -955,6 +968,12 @@ export function HandwritingApp() {
                           </span>
                         ))}
                       </div>
+                    </div>
+                  )}
+                  {shapeTips.length > 0 && (
+                    <div className="shape-tips">
+                      <p>Optional shape tips</p>
+                      <ul>{shapeTips.map((tip) => <li key={tip}>{tip}</li>)}</ul>
                     </div>
                   )}
                   {practiceTips.length > 0 && (

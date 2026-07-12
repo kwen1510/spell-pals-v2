@@ -43,6 +43,7 @@ describe("target-aware grading", () => {
 
   it("uses the completed visual shape as the gate, independent of stroke-count tips", () => {
     expect(markingStatus(true, [{ passed: true }], 1)).toBe("correct");
+    expect(markingStatus(true, [{ passed: true, decision: "pass-with-tip" }], 1)).toBe("tip");
     expect(markingStatus(true, [{ passed: false }], 1)).toBe("shape");
     expect(markingStatus(false, [{ passed: true }], 1)).toBe("unrecognized");
   });
