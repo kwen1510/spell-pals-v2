@@ -39,6 +39,10 @@ Timestamps help identify pauses and accidentally joined strokes. Pressure is ret
 
 Copy `.env.example` to `.env.local` and set `MYSCRIPT_APPLICATION_KEY` and `MYSCRIPT_HMAC_KEY`. Keep both values server-side; neither key belongs in a `NEXT_PUBLIC_` variable.
 
+## Experimental Gemini shape assessor
+
+The development-only `/api/gemini-shape` route compares normalized student ink with the grounded Make Me a Hanzi component template using `gemini-3.1-pro-preview`. Configure `GEMINI_API_KEY` locally and run `npm run experiment:gemini-shape` for the synthetic calibration set. The experiment is disabled in production unless `GEMINI_SHAPE_EXPERIMENT_ENABLED=true` is explicitly configured. Gemini output does not override the deterministic grader.
+
 ## Deploy to Vercel
 
 Import the GitHub repository into Vercel or run `vercel --prod` after completing the verification commands above. Configure both MyScript variables in the Vercel project for Preview and Production before deploying.
