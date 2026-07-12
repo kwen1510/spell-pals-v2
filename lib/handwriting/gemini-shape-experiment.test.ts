@@ -24,6 +24,8 @@ describe("Gemini shape experiment grounding", () => {
     const prompt = buildGeminiShapePrompt(template, template.modelStrokes.map((stroke) => stroke.median));
     expect(prompt).toContain("⿰口斤");
     expect(prompt).toContain("one continuous loop");
+    expect(prompt).toContain("all four boundaries");
+    expect(prompt).toContain("positiveFeedback");
     expect(prompt).toContain('"label": "口"');
     expect(prompt).toContain('"label": "斤"');
   });

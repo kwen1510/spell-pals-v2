@@ -127,6 +127,10 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 4px s
 .result-card.shape { border-color: #e3ba68; background: #fffcf2; }
 .result-card.unrecognized { border-color: #efad9f; background: #fff9f6; }
 .result-card.incomplete { border-color: #e3ba68; background: #fffcf2; }
+.gemini-feedback { display: grid; gap: 8px; margin: 14px 0 0; }
+.gemini-feedback p { margin: 0; color: var(--muted); line-height: 1.45; }
+.gemini-feedback strong { color: var(--ink); margin-right: 6px; }
+.gemini-feedback span { color: #984437; }
 .result-heading { display: flex; align-items: center; gap: 14px; }
 .result-heading > span { display: grid; width: 54px; height: 54px; place-items: center; border-radius: 50%; background: var(--teal); color: white; font-size: 2rem; font-weight: 900; }
 .shape .result-heading > span, .incomplete .result-heading > span { background: #d99a22; }

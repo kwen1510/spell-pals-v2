@@ -60,14 +60,8 @@ The active comparison now uses `gemini-3-flash-preview` with the same structured
 | Modest whole-character distortion | pass | pass | 2.4 s |
 | Substantial unrelated extra diagonal | fail | fail | 3.4 s |
 
-Gemini 3 Flash agreement was 5/5. It preserved the Pro model's result on this small set at roughly one sixth of the latency. Natural, blinded Apple Pencil attempts are still required before it can influence student correctness.
+Gemini 3 Flash agreement was 5/5 after the rubric explicitly required every visible enclosure boundary. It preserved the Pro model's result on this small set at roughly one sixth of the latency.
 
 ## Current recommendation
 
-Keep deterministic visible-piece matching as the instant primary gate. The Gemini 3 Flash rerun determines whether the Gemini path is sufficiently fast and accurate for an optional second opinion. It is potentially useful as:
-
-- a second opinion for deterministic `uncertain` cases;
-- a teacher-only diagnostic experiment;
-- an offline calibration tool for improving component rules.
-
-The route is development-only by default. It must not be enabled in production without an explicit environment flag, rate limits, cost review, privacy notice, and a natural-handwriting accuracy gate.
+Gemini 3 Flash is the active grader. Local WASM and MyScript are not loaded or called. The student interface shows the binary result and only the two short structured feedback fields; the component assessment remains server-side. Production remains protected by authentication, same-origin checks, request limits, payload limits, and the explicit environment flag.

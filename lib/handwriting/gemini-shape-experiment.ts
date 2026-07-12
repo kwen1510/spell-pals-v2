@@ -24,6 +24,8 @@ export const geminiShapeAssessmentSchema = z.object({
   extraPieces: z.array(z.object({
     description: z.string(),
   })),
+  positiveFeedback: z.string(),
+  improvementFeedback: z.string(),
   summary: z.string(),
 });
 
@@ -40,6 +42,8 @@ const RESPONSE_SCHEMA = {
     "components",
     "missingPieces",
     "extraPieces",
+    "positiveFeedback",
+    "improvementFeedback",
     "summary",
   ],
   properties: {
@@ -82,6 +86,8 @@ const RESPONSE_SCHEMA = {
         properties: { description: { type: "string" } },
       },
     },
+    positiveFeedback: { type: "string" },
+    improvementFeedback: { type: "string" },
     summary: { type: "string" },
   },
 } as const;
@@ -188,8 +194,13 @@ Important grading policy:
 - Ignore whole-character translation, overall size, minor rotation, ordinary handwriting wobble, and small connection gaps.
 - Fail when a required visible line/curve/component is absent, a characteristically long line is reduced to a short mark, a required connection has a large gap, or there is a substantial unrelated extra line.
 - Do not excuse a missing piece merely because the character is recognizable or because the expected answer is supplied.
+- Inspect every expected visible path before choosing the verdict. A component is present only when all of its required visible lines or curves exist.
+- Closed components such as 口 must visibly have all four boundaries. An open three-sided shape is incomplete even when it is obviously intended as 口.
+- Never mentally complete, infer, or repair absent ink. Judge only marks visible in the student image.
 - Do not compare calligraphic beauty. Students are not calligraphers.
 - If the images or evidence do not support a reliable decision, return uncertain rather than guessing.
+- positiveFeedback must be one short, student-friendly sentence about a visible part that is already good.
+- improvementFeedback must be one short, student-friendly sentence naming only the most useful next improvement. Return an empty string when no improvement is needed.
 
 Grounding component tree and expected paths:
 ${JSON.stringify(componentEvidence(template), null, 2)}
@@ -197,7 +208,7 @@ ${JSON.stringify(componentEvidence(template), null, 2)}
 Target-independent primitive summary extracted from the student's raw paths:
 ${JSON.stringify(studentPrimitives, null, 2)}
 
-Return the required JSON assessment. Every component id in the component tree must appear exactly once in components.`;
+Return the required JSON assessment. Every component id in the component tree must appear exactly once in components. Keep both feedback fields under 18 words each.`;
 }
 
 export async function assessShapeWithGemini(args: {
