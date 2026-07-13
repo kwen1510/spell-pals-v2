@@ -572,9 +572,7 @@ export function HandwritingApp() {
           </div>
           <div className="result-actions">
             <button onClick={tryAgain}>Try again</button>
-            {(result.status !== "correct" && result.status !== "tip") && (
-              <button className="trace-practice-button" onClick={startTracePractice}>Practise on the template</button>
-            )}
+            <button className="trace-practice-button" onClick={startTracePractice}>Practise over the word</button>
             <button onClick={() => { setTraceTarget(null); setTarget(null); resetDrawing(); }}>Choose another word</button>
           </div>
         </section>
