@@ -50,6 +50,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 4px s
 .word-number { position: absolute; top: 14px; left: 16px; color: #9ab2a8; font-size: .75rem; font-weight: 900; }
 .engine-status-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 18px; margin-top: 28px; }
 .engine-status { margin: 0; color: var(--muted); font-size: .86rem; font-weight: 700; }
+.welcome-card > .engine-status { position: relative; z-index: 1; margin-top: 24px; }
 .engine-status strong { color: var(--ink); }
 .engine-status.ready::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: #22a66f; }
 .engine-status.loading::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: #d8a22f; }
