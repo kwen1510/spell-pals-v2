@@ -81,10 +81,10 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   if (!isRequestAuthenticated(request)) return json({ message: "Authentication required." }, 401);
   const key = apiKey();
-  if (!experimentEnabled()) return json({ message: "The Gemini shape experiment is disabled in production." }, 404);
+  if (!experimentEnabled()) return json({ message: "Handwriting checking is unavailable." }, 404);
   if (!key) return json({ message: "GEMINI_API_KEY is not configured." }, 503);
   if (!sameOrigin(request)) return json({ message: "This assessment request was not accepted." }, 403);
-  if (!withinRateLimit(request)) return json({ message: "Too many Gemini experiment requests. Please wait a moment." }, 429);
+  if (!withinRateLimit(request)) return json({ message: "Too many handwriting checks. Please wait a moment." }, 429);
 
   let input: { expected?: unknown; strokes?: unknown; feedbackLanguage?: unknown };
   try {
@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
   if (!template) return json({ message: "This experiment does not yet have grounded component data for that character." }, 422);
   const strokes = validatedStrokes(input.strokes);
   if (!strokes) return json({ message: "The request contained invalid or excessive stroke data." }, 400);
-  const feedbackLanguage: GeminiFeedbackLanguage = input.feedbackLanguage === "zh-Hant" ? "zh-Hant" : "en-GB";
+  const feedbackLanguage: GeminiFeedbackLanguage = input.feedbackLanguage === "zh-Hans" ? "zh-Hans" : "en-GB";
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45_000);
@@ -116,11 +116,11 @@ export async function POST(request: NextRequest) {
     return json({ assessment, model: GEMINI_SHAPE_MODEL, experimental: true });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      return json({ message: "Gemini took too long to assess this character." }, 504);
+      return json({ message: "Handwriting checking took too long. Please try again." }, 504);
     }
     const message = error instanceof Error && /api key|permission|quota|billing/i.test(error.message)
-      ? "Gemini rejected the configured key, quota, or billing setup."
-      : "Gemini could not return a valid shape assessment.";
+      ? "The handwriting service is not configured correctly."
+      : "The handwriting service could not return a valid assessment.";
     return json({ message }, 502);
   } finally {
     clearTimeout(timeout);

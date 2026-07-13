@@ -11,13 +11,12 @@ import {
 import type { MarkingStatus } from "@/lib/handwriting/grading";
 import { shouldIgnoreTouchInput } from "@/lib/handwriting/input-policy";
 import { cloneStrokes, scaleStrokes } from "@/lib/handwriting/stroke-utils";
-import { segmentByBoxes, segmentByWhitespace } from "@/lib/handwriting/segmentation";
+import { segmentByBoxes } from "@/lib/handwriting/segmentation";
 import type { Stroke, StrokePoint } from "@/lib/handwriting/types";
 
 const WORDS = ["听写", "老师", "飞机场"] as const;
 type Tool = "pen" | "eraser";
-type GuideMode = "free" | "boxes";
-type FeedbackLanguage = "en-GB" | "zh-Hant";
+type FeedbackLanguage = "en-GB" | "zh-Hans";
 type ResultStatus = MarkingStatus;
 type GeminiShapeAssessment = {
   verdict: "correct_shape" | "incorrect_shape" | "uncertain";
@@ -50,7 +49,7 @@ async function requestGeminiAssessment(expected: string, strokes: Stroke[], feed
     message?: string;
   };
   if (!response.ok || !payload.assessment) {
-    throw new Error(payload.message || "Gemini shape checking is unavailable.");
+    throw new Error(payload.message || "Handwriting checking is unavailable.");
   }
   return payload.assessment;
 }
@@ -71,9 +70,10 @@ function Icon({ name }: { name: string }) {
 export function HandwritingApp() {
   const [target, setTarget] = useState<string | null>(null);
   const [tool, setTool] = useState<Tool>("pen");
-  const [guideMode, setGuideMode] = useState<GuideMode>("boxes");
   const [stylusOnly, setStylusOnly] = useState(false);
   const [brushSize, setBrushSize] = useState(7);
+  const [showBrushSize, setShowBrushSize] = useState(false);
+  const [penTapArmed, setPenTapArmed] = useState(false);
   const [feedbackLanguage, setFeedbackLanguage] = useState<FeedbackLanguage>("en-GB");
   const [strokes, setStrokes] = useState<Stroke[]>([]);
   const [undoStack, setUndoStack] = useState<Stroke[][]>([]);
@@ -266,18 +266,9 @@ export function HandwritingApp() {
   }
 
   function selectWord(word: string) {
-    setGuideMode("boxes");
     setTraceTarget(null);
     setTarget(word);
     resetDrawing();
-  }
-
-  function selectGuideMode(mode: GuideMode) {
-    if (mode === guideMode) return;
-    cancelActiveInput(true);
-    invalidateRecognition();
-    if (mode === "free") setTraceTarget(null);
-    setGuideMode(mode);
   }
 
   function tryAgain() {
@@ -287,7 +278,6 @@ export function HandwritingApp() {
 
   function startTracePractice() {
     if (!target) return;
-    setGuideMode("boxes");
     resetDrawing();
     setTraceTarget(target);
     window.requestAnimationFrame(() => {
@@ -436,9 +426,7 @@ export function HandwritingApp() {
     const currentWidth = hostRect?.width ?? dimensions.width;
     const currentHeight = hostRect?.height ?? dimensions.height;
     const markStrokes = cloneStrokes(strokesRef.current);
-    const segmentation = guideMode === "boxes"
-      ? segmentByBoxes(markStrokes, characters.length, currentWidth)
-      : segmentByWhitespace(markStrokes, characters.length, currentWidth);
+    const segmentation = segmentByBoxes(markStrokes, characters.length, currentWidth);
     try {
       const geminiAssessments = await Promise.all(
         segmentation.groups.map((group, index) => requestGeminiAssessment(characters[index], group, feedbackLanguage)),
@@ -477,7 +465,6 @@ export function HandwritingApp() {
               </button>
             ))}
           </div>
-          <p className="engine-status ready"><strong>Gemini 3 Flash</strong> · Ready to check visible character parts</p>
         </section>
       </main>
     );
@@ -492,23 +479,28 @@ export function HandwritingApp() {
         <div className="header-controls">
           <div className="language-toggle" role="group" aria-label="Feedback language">
             <button type="button" className={feedbackLanguage === "en-GB" ? "active" : ""} onClick={() => setFeedbackLanguage("en-GB")} aria-pressed={feedbackLanguage === "en-GB"}>English</button>
-            <button type="button" className={feedbackLanguage === "zh-Hant" ? "active" : ""} onClick={() => setFeedbackLanguage("zh-Hant")} aria-pressed={feedbackLanguage === "zh-Hant"}>繁體中文</button>
+            <button type="button" className={feedbackLanguage === "zh-Hans" ? "active" : ""} onClick={() => setFeedbackLanguage("zh-Hans")} aria-pressed={feedbackLanguage === "zh-Hans"}>简体中文</button>
           </div>
-          <span className="ready-pill">Gemini 3 Flash · Ready</span>
         </div>
       </header>
 
       <section className="keyboard-card">
         <div className="toolbar" aria-label="Whiteboard tools">
           <div className="tool-group">
-            <button className={`tool-button ${tool === "pen" ? "active" : ""}`} onClick={() => setTool("pen")} aria-label="Pen"><Icon name="pen"/><span>Pen</span></button>
-            <button className={`tool-button ${tool === "eraser" ? "active" : ""}`} onClick={() => setTool("eraser")} aria-label="Eraser"><Icon name="eraser"/><span>Eraser</span></button>
+            <div className="pen-control">
+              <button className={`tool-button ${tool === "pen" ? "active" : ""}`} onClick={() => {
+                if (tool !== "pen") {
+                  setTool("pen"); setPenTapArmed(true); setShowBrushSize(false);
+                } else if (!penTapArmed) {
+                  setPenTapArmed(true); setShowBrushSize(false);
+                } else {
+                  setShowBrushSize((visible) => !visible);
+                }
+              }} aria-label="Pen" aria-expanded={showBrushSize}><Icon name="pen"/><span>Pen</span></button>
+              {showBrushSize && <label className="brush-popover"><span>Pen size <strong>{brushSize}</strong></span><input aria-label={`Pen size ${brushSize}`} type="range" min="2" max="14" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))}/></label>}
+            </div>
+            <button className={`tool-button ${tool === "eraser" ? "active" : ""}`} onClick={() => { setTool("eraser"); setPenTapArmed(false); setShowBrushSize(false); }} aria-label="Eraser"><Icon name="eraser"/><span>Eraser</span></button>
             <button className={`tool-button ${!stylusOnly ? "active" : ""}`} onClick={() => setStylusOnly((value) => !value)} aria-label={stylusOnly ? "Pen only input" : "Finger and pen input"}><Icon name="hand"/><span>{stylusOnly ? "Pen only" : "Finger"}</span></button>
-          </div>
-          <label className="size-control"><span>Size</span><input type="range" min="2" max="14" value={brushSize} onChange={(event) => setBrushSize(Number(event.target.value))}/><strong>{brushSize}</strong></label>
-          <div className="mode-toggle" aria-label="Writing guide mode">
-            <button className={guideMode === "free" ? "active" : ""} onClick={() => selectGuideMode("free")}>Free canvas</button>
-            <button className={guideMode === "boxes" ? "active" : ""} onClick={() => selectGuideMode("boxes")}>田字格</button>
           </div>
           <div className="tool-group history-group">
             <button className="tool-button" onClick={undo} disabled={!undoStack.length} aria-label="Undo"><Icon name="undo"/><span>Undo</span></button>
@@ -520,12 +512,12 @@ export function HandwritingApp() {
         <div className="board-scroller">
           <div
             ref={hostRef}
-            className={`canvas-host mode-${guideMode}`}
+            className="canvas-host mode-boxes"
             data-character-count={characterCount}
             style={guideBoardStyle(characterCount)}
           >
-            <ChineseGuide count={characterCount} mode={guideMode}/>
-            {guideMode === "boxes" && traceTarget && <TraceModel characters={traceTarget}/>}
+            <ChineseGuide count={characterCount} mode="boxes"/>
+            {traceTarget && <TraceModel characters={traceTarget}/>}
             <canvas
               ref={canvasRef}
               draggable={false}
@@ -544,12 +536,12 @@ export function HandwritingApp() {
 
         <div className="action-row">
           <p ref={traceInstructionRef} tabIndex={traceTarget ? -1 : undefined} aria-live="polite">
-            {guideMode === "free" ? "Leave a clear vertical space between characters." : "Write one character inside each square."}
+            Write one character inside each square.
             {traceTarget && <strong className="trace-active-copy"> Trace the pale model, then check your practice.</strong>}
           </p>
           <div className="action-buttons">
             {traceTarget && <button className="hide-trace-button" type="button" onClick={() => setTraceTarget(null)}>Hide model</button>}
-            <button className="mark-button" onClick={mark} disabled={marking || !strokes.length} aria-controls="mark-result"><Icon name="check"/>{marking ? "Checking with Gemini…" : "Mark answer"}</button>
+            <button className="mark-button" onClick={mark} disabled={marking || !strokes.length} aria-controls="mark-result"><Icon name="check"/>{marking ? "Checking…" : "Mark answer"}</button>
           </div>
         </div>
       </section>
@@ -587,7 +579,6 @@ export function HandwritingApp() {
           </div>
         </section>
       )}
-      <footer>Answers are checked with Gemini 3 Flash when you press Mark answer.</footer>
     </main>
   );
 }

@@ -31,7 +31,7 @@ const cases: Array<{
   paths: PrimitivePoint[][];
   expectedGemini: "correct_shape" | "incorrect_shape";
   template?: NonNullable<ReturnType<typeof getCharacterTemplate>>;
-  feedbackLanguage?: "en-GB" | "zh-Hant";
+  feedbackLanguage?: "en-GB" | "zh-Hans";
 }> = [
   { name: "official complete median", paths: canonical, expectedGemini: "correct_shape" },
   {
@@ -60,7 +60,7 @@ const cases: Array<{
   {
     name: "malformed 老 with broad U replacing lower 匕",
     template: laoTemplate,
-    feedbackLanguage: "zh-Hant",
+    feedbackLanguage: "zh-Hans",
     paths: [
       [{ x: 0.48, y: 0.1 }, { x: 0.47, y: 0.38 }],
       [{ x: 0.28, y: 0.27 }, { x: 0.62, y: 0.22 }],

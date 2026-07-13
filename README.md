@@ -31,7 +31,7 @@ Set the server-side `PASSWORD` environment variable. A successful login creates 
 
 ## Gemini shape assessor
 
-The route uses `gemini-3-flash-preview`, structured output, temperature `0`, and the model's minimum supported thinking level. Configure `GEMINI_API_KEY` locally and run `npm run experiment:gemini-shape` for the controlled calibration set. Production also requires `GEMINI_SHAPE_EXPERIMENT_ENABLED=true`. Students choose Traditional Chinese or British English feedback and see only the binary result plus one brief positive observation and one brief improvement when needed; internal component and path data is not exposed.
+The route uses `gemini-3-flash-preview`, structured output, temperature `0`, and the model's minimum supported thinking level. Configure `GEMINI_API_KEY` locally and run `npm run experiment:gemini-shape` for the controlled calibration set. Production also requires `GEMINI_SHAPE_EXPERIMENT_ENABLED=true`. Students choose Simplified Chinese or British English feedback and see only the binary result plus one brief positive observation and one brief improvement when needed; internal component and path data is not exposed.
 
 ## Deploy to Vercel
 

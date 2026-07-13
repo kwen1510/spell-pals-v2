@@ -5,7 +5,7 @@ import type { CharacterTemplate } from "./character-template";
 import { extractVisualPrimitives, type PrimitivePoint } from "./primitive-analysis";
 
 export const GEMINI_SHAPE_MODEL = "gemini-3-flash-preview";
-export type GeminiFeedbackLanguage = "en-GB" | "zh-Hant";
+export type GeminiFeedbackLanguage = "en-GB" | "zh-Hans";
 
 export const geminiShapeAssessmentSchema = z.object({
   verdict: z.enum(["correct_shape", "incorrect_shape", "uncertain"]),
@@ -243,7 +243,7 @@ Important grading policy:
 - correct_shape is allowed only when every required path is present, every required component is complete, and no substantial extra mark exists.
 - Do not compare calligraphic beauty. Students are not calligraphers.
 - If the images or evidence do not support a reliable decision, return uncertain rather than guessing.
-- Write positiveFeedback and improvementFeedback in ${feedbackLanguage === "zh-Hant" ? "Traditional Chinese (繁體中文)" : "British English"}.
+- Write positiveFeedback and improvementFeedback in ${feedbackLanguage === "zh-Hans" ? "Simplified Chinese (简体中文)" : "British English"}.
 - positiveFeedback must be one short, student-friendly sentence about a visible part that is already good.
 - improvementFeedback must be one short, student-friendly sentence naming only the most useful next improvement. Return an empty string when no improvement is needed.
 
